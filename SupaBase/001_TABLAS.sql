@@ -33,7 +33,7 @@ CREATE TABLE IF NOT EXISTS perfiles (
   nombre    TEXT NOT NULL,
   correo    TEXT NOT NULL,
   rol       TEXT NOT NULL CHECK (rol IN (
-              'inspector','residente','interventor','supervisor','admin'
+              'inspector','obra','interventor','supervisor','admin'
             )),
   empresa   TEXT NOT NULL,
   contrato  TEXT NOT NULL DEFAULT 'IDU-1556-2025',
