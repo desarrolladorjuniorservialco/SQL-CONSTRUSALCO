@@ -476,30 +476,8 @@ CREATE TABLE IF NOT EXISTS RF_ReporteDiario (
 --    Fuente: Cantidades_Obra.gpkg · Formulario_PMT.gpkg
 -- ════════════════════════════════════════════════════════════
 
--- 7.1 Cantidades de obra  (Cantidades_Obra)
-CREATE TABLE IF NOT EXISTS cantidades_obra (
-  id               UUID DEFAULT gen_random_uuid() PRIMARY KEY,
-  Folio            TEXT UNIQUE NOT NULL,
-  contrato_id      TEXT REFERENCES contratos(id),
-  Fecha            DATE,
-  Fecha_Reporte    DATE,
-  usuario          TEXT,
-  id_tramo         TEXT REFERENCES tramos_bd(id_tramo),
-  Tipo_Infraestructura TEXT REFERENCES tramos_aux_infra(codigo),
-  CIV              TEXT,
-  Codigo_Elemento  TEXT REFERENCES presupuesto_bd(codigo_idu),
-  Capitulo_Num     TEXT,
-  Capitulo         TEXT,
-  Item_Pago        TEXT,
-  Item_Descripcion TEXT,
-  Unidad           TEXT,
-  Cantidad         NUMERIC(12,3),
-  Observaciones    TEXT,
-  latitud          DOUBLE PRECISION,
-  longitud         DOUBLE PRECISION
-);
 
--- 7.2 Formulario PMT  (Formulario_PMT)
+-- 7.1 Formulario PMT  (Formulario_PMT)
 CREATE TABLE IF NOT EXISTS formulario_pmt (
   id               UUID DEFAULT gen_random_uuid() PRIMARY KEY,
   Folio            TEXT UNIQUE NOT NULL,
