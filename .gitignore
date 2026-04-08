@@ -1,0 +1,17 @@
+# Extensiones de VS Code y configuración local
+.vscode/
+*.code-workspace
+
+# Archivos temporales del sistema
+.DS_Store
+Thumbs.db
+
+# Variables de entorno 
+# Aquí es donde se suelen guardar las contraseñas de la base de datos
+.env
+.env.local
+*.env
+
+# Archivos de respaldo de bases de datos 
+*.bak
+*.sql.gz
