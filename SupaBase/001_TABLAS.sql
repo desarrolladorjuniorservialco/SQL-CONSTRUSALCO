@@ -4,39 +4,28 @@
 -- Contratista: SERVIALCO S.A.S.
 -- Interventoría: IDU
 --
---   CORRECCIONES respecto a la versión anterior
+--   CORRECCIONES v4
 --   ─────────────────────────────────────────────
---   [1] contratos.contratista  : 'URBACON S.A.S.' → 'SERVIALCO S.A.S.'
---   [2] perfiles.rol CHECK     : agrega 'residente' y 'coordinador'
---   [3] tramos_aux_infra       : INSERT inicial completo con los 3 códigos
---                                (EP / CI / MV) y su nombre largo correcto
---   [4] presupuesto_aux_actividad: INSERT inicial con valores comunes;
---                                  el sync los completa dinámicamente
---   [5] registros_cantidades   : columna 'fecha_fin' agregada (faltaba en DDL
---                                anterior pero sí estaba en el sync)
---   [6] Comentarios de relación QGis actualizados
---
---   MÓDULOS
---   1.  Perfiles / Contratos
---   2.  Tablas de referencia geográfica (Tramos, Localidades)
---   3.  Tablas de Presupuesto
---   4.  Formularios principales (Cantidades, Componentes, Reporte Diario)
---   5.  Tablas secundarias del Reporte Diario (Personal, Maquinaria, SST…)
---   6.  Registros fotográficos (RF_*)
---   7.  Formularios geográficos adicionales (PMT)
---   8.  Auditoría y flujo (historial_estados, cierres, notificaciones)
+--   [1] contratos.contratista     : 'SERVIALCO S.A.S.' + ON CONFLICT DO UPDATE
+--   [2] perfiles.rol CHECK        : agrega 'residente' y 'coordinador'
+--   [3] tramos_aux_infra INSERT   : 3 códigos base (EP/CI/MV) con DO UPDATE
+--   [4] presupuesto_aux_actividad : INSERT inicial con valores comunes
+--   [5] registros_cantidades      : columna fecha_fin agregada
+--   [6] NORMALIZACIÓN COMPLETA    : todos los nombres de columna en minúsculas
+--                                   sin comillas dobles — elimina el error
+--                                   42703 "column Folio does not exist"
 --
 --   RELACIONES QGis (SIG_IDU-1556-2025_cloud.qgs)
---   • BD_SST_Ambiental.Folio          → registros_reporteDiario.Folio
---   • BD_CondicionClimatica.Folio     → registros_reporteDiario.Folio
---   • BD_MaquinariaObra.Folio         → registros_reporteDiario.Folio
---   • BD_PersonalObra.Folio           → registros_reporteDiario.Folio
---   • RF_Cantidades.ID_Unico          → registros_cantidades.ID_Unico
---   • RF_Componentes.ID_Unico         → registros_componentes.ID_Unico
---   • RF_ReporteDiario.ID_Unico       → registros_reporteDiario.ID_Unico
---   • registros_cantidades.tipo_infra → tramos_aux_infra(codigo)
---   • registros_componentes.tipo_infra→ tramos_aux_infra(codigo)
---   • tramos_bd.infraestructura       → tramos_aux_infra(codigo)
+--   • bd_personal_obra.folio       → registros_reporte_diario.folio
+--   • bd_condicion_climatica.folio → registros_reporte_diario.folio
+--   • bd_maquinaria_obra.folio     → registros_reporte_diario.folio
+--   • bd_sst_ambiental.folio       → registros_reporte_diario.folio
+--   • rf_cantidades.id_unico       → registros_cantidades.id_unico
+--   • rf_componentes.id_unico      → registros_componentes.id_unico
+--   • rf_reporte_diario.id_unico   → registros_reporte_diario.id_unico
+--   • registros_cantidades.tipo_infra  → tramos_aux_infra(codigo)
+--   • registros_componentes.tipo_infra → tramos_aux_infra(codigo)
+--   • tramos_bd.infraestructura        → tramos_aux_infra(codigo)
 -- ============================================================
 
 
@@ -49,7 +38,6 @@ CREATE TABLE IF NOT EXISTS perfiles (
   nombre    TEXT NOT NULL,
   correo    TEXT NOT NULL,
   rol       TEXT NOT NULL CHECK (rol IN (
-              -- [CORRECCIÓN 2] agrega 'residente' y 'coordinador'
               'inspector','obra','interventor','supervisor','admin',
               'residente','coordinador'
             )),
@@ -70,7 +58,6 @@ CREATE TABLE IF NOT EXISTS contratos (
   activo         BOOLEAN DEFAULT TRUE
 );
 
--- [CORRECCIÓN 1] contratista = 'SERVIALCO S.A.S.' (no 'URBACON S.A.S.')
 INSERT INTO contratos VALUES (
   'IDU-1556-2025',
   'Contrato IDU-1556-2025 Grupo 4',
@@ -81,31 +68,27 @@ INSERT INTO contratos VALUES (
   '2026-12-31',
   TRUE
 ) ON CONFLICT (id) DO UPDATE SET
-  contratista = EXCLUDED.contratista;   -- actualiza si ya existía con valor incorrecto
+  contratista = EXCLUDED.contratista;
 
 
 -- ════════════════════════════════════════════════════════════
 -- 2. TABLAS DE REFERENCIA GEOGRÁFICA
---    Fuente: TramosIDU15562025*.gpkg · loca.gpkg
 -- ════════════════════════════════════════════════════════════
 
--- 2.1 Localidades  (loca · Loca)
+-- 2.1 Localidades
 CREATE TABLE IF NOT EXISTS localidades (
-  id          SERIAL PRIMARY KEY,
-  loc_codigo  TEXT UNIQUE,
-  loc_nombre  TEXT NOT NULL,
-  loc_admin   TEXT,
-  loc_area    NUMERIC(18,4)
+  id         SERIAL PRIMARY KEY,
+  loc_codigo TEXT UNIQUE,
+  loc_nombre TEXT NOT NULL,
+  loc_admin  TEXT,
+  loc_area   NUMERIC(18,4)
 );
 
--- 2.2 Catálogo de tipos de infraestructura  (TramosIDU15562025AUXINFRA)
---     PK: codigo (EP / CI / MV)
---     nombre: texto largo que llega desde el GPKG de tramos
---     El sync convierte nombre→codigo antes de insertar en tramos_bd
--- [CORRECCIÓN 3] INSERT inicial completo con los 3 registros base
+-- 2.2 Catálogo de tipos de infraestructura
+--     PK: codigo (EP/CI/MV)  ←  tramos_bd.infraestructura referencia este campo
 CREATE TABLE IF NOT EXISTS tramos_aux_infra (
-  codigo  TEXT PRIMARY KEY,   -- Field1 del GPKG  (EP, CI, MV)
-  nombre  TEXT NOT NULL       -- Field2 del GPKG  (Espacio Público, Ciclorruta, Malla Vial)
+  codigo TEXT PRIMARY KEY,
+  nombre TEXT NOT NULL
 );
 
 INSERT INTO tramos_aux_infra (codigo, nombre) VALUES
@@ -114,14 +97,13 @@ INSERT INTO tramos_aux_infra (codigo, nombre) VALUES
   ('MV', 'Malla Vial')
 ON CONFLICT (codigo) DO UPDATE SET nombre = EXCLUDED.nombre;
 
--- 2.3 Catálogo de tramos  (TramosIDU15562025AUXTRAMOS)
+-- 2.3 Catálogo de tramos
 CREATE TABLE IF NOT EXISTS tramos_aux_tramos (
-  codigo      TEXT PRIMARY KEY,  -- Field1 del GPKG  (ej. T-01)
-  descripcion TEXT NOT NULL      -- Field2 del GPKG
+  codigo      TEXT PRIMARY KEY,
+  descripcion TEXT NOT NULL
 );
 
--- 2.4 Base de datos de tramos  (TramosIDU15562025BDTRAMOS)
---     infraestructura referencia tramos_aux_infra(codigo) → 'EP' | 'CI' | 'MV'
+-- 2.4 Base de datos de tramos
 CREATE TABLE IF NOT EXISTS tramos_bd (
   id_tramo          TEXT PRIMARY KEY,
   tramo_descripcion TEXT,
@@ -138,15 +120,11 @@ CREATE TABLE IF NOT EXISTS tramos_bd (
 
 -- ════════════════════════════════════════════════════════════
 -- 3. TABLAS DE PRESUPUESTO
---    Fuente: PresupuestoIDU15562025*.gpkg · Presupuesto_Componentes.gpkg
 -- ════════════════════════════════════════════════════════════
 
--- 3.1 Catálogo de tipos de actividad  (PresupuestoIDU15562025AUXACTIVIDAD)
---     Poblado dinámicamente por sync_presupuesto_aux_actividad() antes de
---     insertar presupuesto_bd y los formularios principales.
--- [CORRECCIÓN 4] INSERT inicial con valores comunes conocidos
+-- 3.1 Catálogo de tipos de actividad
 CREATE TABLE IF NOT EXISTS presupuesto_aux_actividad (
-  tipo_actividad  TEXT PRIMARY KEY
+  tipo_actividad TEXT PRIMARY KEY
 );
 
 INSERT INTO presupuesto_aux_actividad (tipo_actividad) VALUES
@@ -156,7 +134,7 @@ INSERT INTO presupuesto_aux_actividad (tipo_actividad) VALUES
   ('MEJORAMIENTO')
 ON CONFLICT (tipo_actividad) DO NOTHING;
 
--- 3.2 Catálogo de capítulos  (PresupuestoIDU15562025AUXCAPITULOS)
+-- 3.2 Catálogo de capítulos
 CREATE TABLE IF NOT EXISTS presupuesto_aux_capitulos (
   id             SERIAL PRIMARY KEY,
   tipo_actividad TEXT REFERENCES presupuesto_aux_actividad(tipo_actividad),
@@ -165,7 +143,7 @@ CREATE TABLE IF NOT EXISTS presupuesto_aux_capitulos (
   UNIQUE (tipo_actividad, capitulo_num)
 );
 
--- 3.3 Presupuesto de obras  (PresupuestoIDU15562025BDPRESUPUESTO)
+-- 3.3 Presupuesto de obras
 CREATE TABLE IF NOT EXISTS presupuesto_bd (
   id             SERIAL PRIMARY KEY,
   tipo_actividad TEXT REFERENCES presupuesto_aux_actividad(tipo_actividad),
@@ -178,7 +156,7 @@ CREATE TABLE IF NOT EXISTS presupuesto_bd (
   cantidad_ppto  NUMERIC(16,4)
 );
 
--- 3.4 Presupuesto de componentes  (Presupuesto_Componentes · ppto_componentes)
+-- 3.4 Presupuesto de componentes
 CREATE TABLE IF NOT EXISTS presupuesto_componentes_bd (
   id              SERIAL PRIMARY KEY,
   capitulo_num    TEXT,
@@ -193,8 +171,7 @@ CREATE TABLE IF NOT EXISTS presupuesto_componentes_bd (
   item_pago       TEXT
 );
 
--- 3.5 Auxiliar de componentes  (ppto_componentes__aux_pptcomponentes)
---     Field1=codigo_idu, Field2=componente, Field3=tipo_actividad, Capitulo=capitulo
+-- 3.5 Auxiliar de componentes
 CREATE TABLE IF NOT EXISTS presupuesto_componentes_aux (
   id             SERIAL PRIMARY KEY,
   codigo_idu     TEXT,
@@ -206,324 +183,314 @@ CREATE TABLE IF NOT EXISTS presupuesto_componentes_aux (
 
 -- ════════════════════════════════════════════════════════════
 -- 4. FORMULARIOS PRINCIPALES
---    Fuente: Formulario_Cantidades.gpkg · Reporte_Componentes.gpkg
---            Reporte_Diario.gpkg
 -- ════════════════════════════════════════════════════════════
 
--- 4.1 Formulario de Cantidades  (Formulario_Cantidades · Formulario_Cantidades_V2)
--- [CORRECCIÓN 5] columna fecha_fin agregada (estaba en el sync pero no en el DDL anterior)
+-- 4.1 Formulario de Cantidades
 CREATE TABLE IF NOT EXISTS registros_cantidades (
-  id                   UUID DEFAULT gen_random_uuid() PRIMARY KEY,
-  folio                TEXT UNIQUE NOT NULL,
-  ID_Unico             TEXT UNIQUE,
-  contrato_id          TEXT REFERENCES contratos(id),
-  fecha_creacion       TIMESTAMPTZ DEFAULT NOW(),
-  creado_por           UUID REFERENCES perfiles(id),
-  usuario_qfield       TEXT,
+  id                         UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  folio                      TEXT UNIQUE NOT NULL,
+  id_unico                   TEXT UNIQUE,
+  contrato_id                TEXT REFERENCES contratos(id),
+  fecha_creacion             TIMESTAMPTZ DEFAULT NOW(),
+  creado_por                 UUID REFERENCES perfiles(id),
+  usuario_qfield             TEXT,
 
   -- Localización y elemento
-  id_tramo             TEXT REFERENCES tramos_bd(id_tramo),
-  tramo_descripcion    TEXT,
-  civ                  TEXT,
-  codigo_elemento      TEXT REFERENCES presupuesto_bd(codigo_idu),
-  tipo_infra           TEXT REFERENCES tramos_aux_infra(codigo),
-  latitud              DOUBLE PRECISION,
-  longitud             DOUBLE PRECISION,
+  id_tramo                   TEXT REFERENCES tramos_bd(id_tramo),
+  tramo_descripcion          TEXT,
+  civ                        TEXT,
+  codigo_elemento            TEXT REFERENCES presupuesto_bd(codigo_idu),
+  tipo_infra                 TEXT REFERENCES tramos_aux_infra(codigo),
+  latitud                    DOUBLE PRECISION,
+  longitud                   DOUBLE PRECISION,
 
   -- Periodo de ejecución
-  fecha_inicio         DATE,
-  fecha_fin            DATE,   -- [CORRECCIÓN 5]
+  fecha_inicio               DATE,
+  fecha_fin                  DATE,
 
-  -- Clasificación de actividad (ítems de pago)
-  tipo_actividad       TEXT REFERENCES presupuesto_aux_actividad(tipo_actividad),
-  capitulo_num         TEXT,
-  capitulo             TEXT,
-  item_pago            TEXT,
-  item_descripcion     TEXT,
-  unidad               TEXT,
-  cantidad             NUMERIC(12,3),
-  descripcion          TEXT,
+  -- Clasificación de actividad
+  tipo_actividad             TEXT REFERENCES presupuesto_aux_actividad(tipo_actividad),
+  capitulo_num               TEXT,
+  capitulo                   TEXT,
+  item_pago                  TEXT,
+  item_descripcion           TEXT,
+  unidad                     TEXT,
+  cantidad                   NUMERIC(12,3),
+  descripcion                TEXT,
 
-  -- Evidencia fotográfica (paths + URLs firmadas)
-  foto_1_path          TEXT,
-  foto_1_url           TEXT,
-  foto_2_path          TEXT,
-  foto_2_url           TEXT,
-  foto_3_path          TEXT,
-  foto_3_url           TEXT,
-  foto_4_path          TEXT,
-  foto_4_url           TEXT,
-  foto_5_path          TEXT,
-  foto_5_url           TEXT,
-  documento_adj_path   TEXT,
-  documento_adj_url    TEXT,
-  observaciones        TEXT,
+  -- Evidencia fotográfica
+  foto_1_path                TEXT,
+  foto_1_url                 TEXT,
+  foto_2_path                TEXT,
+  foto_2_url                 TEXT,
+  foto_3_path                TEXT,
+  foto_3_url                 TEXT,
+  foto_4_path                TEXT,
+  foto_4_url                 TEXT,
+  foto_5_path                TEXT,
+  foto_5_url                 TEXT,
+  documento_adj_path         TEXT,
+  documento_adj_url          TEXT,
+  observaciones              TEXT,
 
   -- Interventoría
-  "CodigoInterventor"           TEXT,
-  "AcompañamientoInterventor"   TEXT,
+  codigointerventor          TEXT,
+  acompañamientointerventor  TEXT,
 
-  -- ── Flujo de aprobación ──────────────────────────────────
-  estado               TEXT NOT NULL DEFAULT 'BORRADOR' CHECK (estado IN (
-                         'BORRADOR','DEVUELTO','REVISADO','APROBADO'
-                       )),
-  estado_general       TEXT,
+  -- Flujo de aprobación
+  estado                     TEXT NOT NULL DEFAULT 'BORRADOR' CHECK (estado IN (
+                               'BORRADOR','DEVUELTO','REVISADO','APROBADO'
+                             )),
+  estado_general             TEXT,
 
   -- Nivel 1: Residente
-  cant_residente       NUMERIC(12,3),
-  estado_residente     TEXT CHECK (estado_residente IN ('aprobado','devuelto')),
-  aprobado_residente   UUID REFERENCES perfiles(id),
-  fecha_residente      TIMESTAMPTZ,
-  obs_residente        TEXT,
+  cant_residente             NUMERIC(12,3),
+  estado_residente           TEXT CHECK (estado_residente IN ('aprobado','devuelto')),
+  aprobado_residente         UUID REFERENCES perfiles(id),
+  fecha_residente            TIMESTAMPTZ,
+  obs_residente              TEXT,
 
   -- Nivel 2: Interventor
-  cant_interventor     NUMERIC(12,3),
-  estado_interventor   TEXT CHECK (estado_interventor IN ('aprobado','devuelto')),
-  aprobado_interventor UUID REFERENCES perfiles(id),
-  fecha_interventor    TIMESTAMPTZ,
-  obs_interventor      TEXT,
+  cant_interventor           NUMERIC(12,3),
+  estado_interventor         TEXT CHECK (estado_interventor IN ('aprobado','devuelto')),
+  aprobado_interventor       UUID REFERENCES perfiles(id),
+  fecha_interventor          TIMESTAMPTZ,
+  obs_interventor            TEXT,
 
   -- Trazabilidad técnica
-  ip_creacion          TEXT,
-  ip_residente         TEXT,
-  ip_interventor       TEXT,
-  qfield_sync_id       TEXT,
-  inmutable            BOOLEAN DEFAULT FALSE
+  ip_creacion                TEXT,
+  ip_residente               TEXT,
+  ip_interventor             TEXT,
+  qfield_sync_id             TEXT,
+  inmutable                  BOOLEAN DEFAULT FALSE
 );
 
--- 4.2 Formulario de Componentes  (Reporte_Componentes)
+-- 4.2 Formulario de Componentes
 CREATE TABLE IF NOT EXISTS registros_componentes (
-  id                   UUID DEFAULT gen_random_uuid() PRIMARY KEY,
-  "Folio"              TEXT UNIQUE NOT NULL,
-  "ID_Unico"           TEXT UNIQUE,
-  contrato_id          TEXT REFERENCES contratos(id),
-  fecha_creacion       TIMESTAMPTZ DEFAULT NOW(),
-  creado_por           UUID REFERENCES perfiles(id),
-  usuario_qfield       TEXT,
+  id                         UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  folio                      TEXT UNIQUE NOT NULL,
+  id_unico                   TEXT UNIQUE,
+  contrato_id                TEXT REFERENCES contratos(id),
+  fecha_creacion             TIMESTAMPTZ DEFAULT NOW(),
+  creado_por                 UUID REFERENCES perfiles(id),
+  usuario_qfield             TEXT,
 
   -- Localización y elemento
-  id_tramo             TEXT REFERENCES tramos_bd(id_tramo),
-  "Tramo"              TEXT,
-  "CIV"                TEXT,
-  codigo_elemento      TEXT REFERENCES presupuesto_componentes_bd(codigo_idu),
-  tipo_infra           TEXT REFERENCES tramos_aux_infra(codigo),
-  "Componente"         TEXT,
-  latitud              DOUBLE PRECISION,
-  longitud             DOUBLE PRECISION,
+  id_tramo                   TEXT REFERENCES tramos_bd(id_tramo),
+  tramo                      TEXT,
+  civ                        TEXT,
+  codigo_elemento            TEXT REFERENCES presupuesto_componentes_bd(codigo_idu),
+  tipo_infra                 TEXT REFERENCES tramos_aux_infra(codigo),
+  componente                 TEXT,
+  latitud                    DOUBLE PRECISION,
+  longitud                   DOUBLE PRECISION,
 
-  -- Periodo de ejecución
-  "Fecha"              DATE,
-  "Fecha_Reporte"      DATE,
+  -- Periodo
+  fecha                      DATE,
+  fecha_reporte              DATE,
 
-  -- Clasificación de actividad (ítems de pago)
-  tipo_actividad       TEXT REFERENCES presupuesto_aux_actividad(tipo_actividad),
-  capitulo_num         TEXT,
-  capitulo             TEXT,
-  item_pago            TEXT,
-  item_descripcion     TEXT,
-  cantidad             NUMERIC(12,3),
-  unidad               TEXT,
-  precio_unitario      DOUBLE PRECISION,
-  "Observaciones"      TEXT,
-  "Profesional"        TEXT,
-  "CodigoInterventor"           TEXT,
-  "AcompañamientoInterventor"   TEXT,
+  -- Clasificación de actividad
+  tipo_actividad             TEXT REFERENCES presupuesto_aux_actividad(tipo_actividad),
+  capitulo_num               TEXT,
+  capitulo                   TEXT,
+  item_pago                  TEXT,
+  item_descripcion           TEXT,
+  cantidad                   NUMERIC(12,3),
+  unidad                     TEXT,
+  precio_unitario            DOUBLE PRECISION,
+  observaciones              TEXT,
+  profesional                TEXT,
+  codigointerventor          TEXT,
+  acompañamientointerventor  TEXT,
 
-  -- ── Flujo de aprobación ──────────────────────────────────
-  estado               TEXT NOT NULL DEFAULT 'BORRADOR' CHECK (estado IN (
-                         'BORRADOR','DEVUELTO','REVISADO','APROBADO'
-                       )),
-  estado_general       TEXT,
+  -- Flujo de aprobación
+  estado                     TEXT NOT NULL DEFAULT 'BORRADOR' CHECK (estado IN (
+                               'BORRADOR','DEVUELTO','REVISADO','APROBADO'
+                             )),
+  estado_general             TEXT,
 
   -- Nivel 1: Residente
-  cant_residente       NUMERIC(12,3),
-  estado_residente     TEXT CHECK (estado_residente IN ('aprobado','devuelto')),
-  aprobado_residente   UUID REFERENCES perfiles(id),
-  fecha_residente      TIMESTAMPTZ,
-  obs_residente        TEXT,
+  cant_residente             NUMERIC(12,3),
+  estado_residente           TEXT CHECK (estado_residente IN ('aprobado','devuelto')),
+  aprobado_residente         UUID REFERENCES perfiles(id),
+  fecha_residente            TIMESTAMPTZ,
+  obs_residente              TEXT,
 
   -- Nivel 2: Interventor
-  cant_interventor     NUMERIC(12,3),
-  estado_interventor   TEXT CHECK (estado_interventor IN ('aprobado','devuelto')),
-  aprobado_interventor UUID REFERENCES perfiles(id),
-  fecha_interventor    TIMESTAMPTZ,
-  obs_interventor      TEXT,
+  cant_interventor           NUMERIC(12,3),
+  estado_interventor         TEXT CHECK (estado_interventor IN ('aprobado','devuelto')),
+  aprobado_interventor       UUID REFERENCES perfiles(id),
+  fecha_interventor          TIMESTAMPTZ,
+  obs_interventor            TEXT,
 
   -- Trazabilidad técnica
-  ip_creacion          TEXT,
-  ip_residente         TEXT,
-  ip_interventor       TEXT,
-  qfield_sync_id       TEXT,
-  inmutable            BOOLEAN DEFAULT FALSE
+  ip_creacion                TEXT,
+  ip_residente               TEXT,
+  ip_interventor             TEXT,
+  qfield_sync_id             TEXT,
+  inmutable                  BOOLEAN DEFAULT FALSE
 );
 
--- 4.3 Reporte Diario  (Reporte_Diario.gpkg · Reporte_Diario)
-CREATE TABLE IF NOT EXISTS registros_reporteDiario (
-  id                   UUID DEFAULT gen_random_uuid() PRIMARY KEY,
-  "Folio"              TEXT UNIQUE NOT NULL,
-  "ID_Unico"           TEXT UNIQUE,
-  contrato_id          TEXT REFERENCES contratos(id),
-  fecha_creacion       TIMESTAMPTZ DEFAULT NOW(),
-  creado_por           UUID REFERENCES perfiles(id),
-  usuario_qfield       TEXT,
+-- 4.3 Reporte Diario
+CREATE TABLE IF NOT EXISTS registros_reporte_diario (
+  id                         UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  folio                      TEXT UNIQUE NOT NULL,
+  id_unico                   TEXT UNIQUE,
+  contrato_id                TEXT REFERENCES contratos(id),
+  fecha_creacion             TIMESTAMPTZ DEFAULT NOW(),
+  creado_por                 UUID REFERENCES perfiles(id),
+  usuario_qfield             TEXT,
 
   -- Localización
-  latitud              DOUBLE PRECISION,
-  longitud             DOUBLE PRECISION,
+  latitud                    DOUBLE PRECISION,
+  longitud                   DOUBLE PRECISION,
 
-  -- Periodo de ejecución
-  "Fecha"              DATE,
-  "Fecha_Reporte"      DATE,
+  -- Periodo
+  fecha                      DATE,
+  fecha_reporte              DATE,
+  observaciones              TEXT,
 
-  "Observaciones"      TEXT,
-
-  -- ── Flujo de aprobación ──────────────────────────────────
-  estado               TEXT NOT NULL DEFAULT 'BORRADOR' CHECK (estado IN (
-                         'BORRADOR','DEVUELTO','REVISADO','APROBADO'
-                       )),
-  estado_general       TEXT,
+  -- Flujo de aprobación
+  estado                     TEXT NOT NULL DEFAULT 'BORRADOR' CHECK (estado IN (
+                               'BORRADOR','DEVUELTO','REVISADO','APROBADO'
+                             )),
+  estado_general             TEXT,
 
   -- Nivel 1: Residente
-  cant_residente       NUMERIC(12,3),
-  estado_residente     TEXT CHECK (estado_residente IN ('aprobado','devuelto')),
-  aprobado_residente   UUID REFERENCES perfiles(id),
-  fecha_residente      TIMESTAMPTZ,
-  obs_residente        TEXT,
+  cant_residente             NUMERIC(12,3),
+  estado_residente           TEXT CHECK (estado_residente IN ('aprobado','devuelto')),
+  aprobado_residente         UUID REFERENCES perfiles(id),
+  fecha_residente            TIMESTAMPTZ,
+  obs_residente              TEXT,
 
   -- Nivel 2: Interventor
-  cant_interventor     NUMERIC(12,3),
-  estado_interventor   TEXT CHECK (estado_interventor IN ('aprobado','devuelto')),
-  aprobado_interventor UUID REFERENCES perfiles(id),
-  fecha_interventor    TIMESTAMPTZ,
-  obs_interventor      TEXT,
+  cant_interventor           NUMERIC(12,3),
+  estado_interventor         TEXT CHECK (estado_interventor IN ('aprobado','devuelto')),
+  aprobado_interventor       UUID REFERENCES perfiles(id),
+  fecha_interventor          TIMESTAMPTZ,
+  obs_interventor            TEXT,
 
   -- Trazabilidad técnica
-  ip_creacion          TEXT,
-  ip_residente         TEXT,
-  ip_interventor       TEXT,
-  qfield_sync_id       TEXT,
-  inmutable            BOOLEAN DEFAULT FALSE
+  ip_creacion                TEXT,
+  ip_residente               TEXT,
+  ip_interventor             TEXT,
+  qfield_sync_id             TEXT,
+  inmutable                  BOOLEAN DEFAULT FALSE
 );
 
 
 -- ════════════════════════════════════════════════════════════
 -- 5. TABLAS SECUNDARIAS DEL REPORTE DIARIO
---    Fuente: BD_PersonalObra.gpkg · BD_CondicionClimatica.gpkg
---            BD_MaquinariaObra.gpkg · BD_SST-Ambiental.gpkg
---    Relación QGis: [tabla].Folio → registros_reporteDiario.Folio  (Composition)
+--    FK: folio → registros_reporte_diario.folio
 -- ════════════════════════════════════════════════════════════
 
--- 5.1 Personal de obra  (BD_PersonalObra)
-CREATE TABLE IF NOT EXISTS "BD_PersonalObra" (
-  id                  UUID DEFAULT gen_random_uuid() PRIMARY KEY,
-  "Folio"             TEXT NOT NULL REFERENCES registros_reporteDiario("Folio") ON DELETE CASCADE,
-  "Inspectores"       NUMERIC(12,3),
-  "PersonalOperativo" NUMERIC(12,3),
-  "PersonalBOAL"      NUMERIC(12,3),
-  "PersonalTransito"  NUMERIC(12,3),
-  "Longitud"          DOUBLE PRECISION,
-  "Latitud"           DOUBLE PRECISION
+-- 5.1 Personal de obra
+CREATE TABLE IF NOT EXISTS bd_personal_obra (
+  id                 UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  folio              TEXT NOT NULL REFERENCES registros_reporte_diario(folio) ON DELETE CASCADE,
+  inspectores        NUMERIC(12,3),
+  personal_operativo NUMERIC(12,3),
+  personal_boal      NUMERIC(12,3),
+  personal_transito  NUMERIC(12,3),
+  longitud           DOUBLE PRECISION,
+  latitud            DOUBLE PRECISION
 );
 
--- 5.2 Condición climática  (BD_CondicionClimatica)
-CREATE TABLE IF NOT EXISTS "BD_CondicionClimatica" (
-  id              UUID DEFAULT gen_random_uuid() PRIMARY KEY,
-  "Folio"         TEXT NOT NULL REFERENCES registros_reporteDiario("Folio") ON DELETE CASCADE,
-  "EstadoClima"   TEXT,
-  "Hora"          TIME,
-  "Observaciones" TEXT,
-  "Longitud"      DOUBLE PRECISION,
-  "Latitud"       DOUBLE PRECISION
+-- 5.2 Condición climática
+CREATE TABLE IF NOT EXISTS bd_condicion_climatica (
+  id            UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  folio         TEXT NOT NULL REFERENCES registros_reporte_diario(folio) ON DELETE CASCADE,
+  estado_clima  TEXT,
+  hora          TIME,
+  observaciones TEXT,
+  longitud      DOUBLE PRECISION,
+  latitud       DOUBLE PRECISION
 );
 
--- 5.3 Maquinaria en obra  (BD_MaquinariaObra)
-CREATE TABLE IF NOT EXISTS "BD_MaquinariaObra" (
-  id                        UUID DEFAULT gen_random_uuid() PRIMARY KEY,
-  "Folio"                   TEXT NOT NULL REFERENCES registros_reporteDiario("Folio") ON DELETE CASCADE,
-  "Operarios"               NUMERIC(12,3),
-  "Volquetas"               NUMERIC(12,3),
-  "Vibrocompactador"        NUMERIC(12,3),
-  "EquiposEspeciales"       NUMERIC(12,3),
-  "Minicargador"            NUMERIC(12,3),
-  "Ruteadora"               NUMERIC(12,3),
-  "Compresor"               NUMERIC(12,3),
-  "Retrocargador"           NUMERIC(12,3),
-  "ExtendedoraAsfalto"      NUMERIC(12,3),
-  "CompactadorNeumatico"    NUMERIC(12,3),
-  "Observaciones"           TEXT,
-  "Longitud"                DOUBLE PRECISION,
-  "Latitud"                 DOUBLE PRECISION
+-- 5.3 Maquinaria en obra
+CREATE TABLE IF NOT EXISTS bd_maquinaria_obra (
+  id                      UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  folio                   TEXT NOT NULL REFERENCES registros_reporte_diario(folio) ON DELETE CASCADE,
+  operarios               NUMERIC(12,3),
+  volquetas               NUMERIC(12,3),
+  vibrocompactador        NUMERIC(12,3),
+  equipos_especiales      NUMERIC(12,3),
+  minicargador            NUMERIC(12,3),
+  ruteadora               NUMERIC(12,3),
+  compresor               NUMERIC(12,3),
+  retrocargador           NUMERIC(12,3),
+  extendedora_asfalto     NUMERIC(12,3),
+  compactador_neumatico   NUMERIC(12,3),
+  observaciones           TEXT,
+  longitud                DOUBLE PRECISION,
+  latitud                 DOUBLE PRECISION
 );
 
--- 5.4 SST – Ambiental  (BD_SST-Ambiental · tabla GPkg: BBD_SST-Ambiental)
---     Nombre normalizado a BD_SST_Ambiental para compatibilidad SQL
-CREATE TABLE IF NOT EXISTS "BD_SST_Ambiental" (
-  id                  UUID DEFAULT gen_random_uuid() PRIMARY KEY,
-  "Folio"             TEXT NOT NULL REFERENCES registros_reporteDiario("Folio") ON DELETE CASCADE,
-  "Observaciones"     TEXT,
-  "Longitud"          DOUBLE PRECISION,
-  "Latitud"           DOUBLE PRECISION,
-  "Botiquin"          NUMERIC(12,3),
-  "KitAntiderrames"   NUMERIC(12,3),
-  "PuntoHidratacion"  NUMERIC(12,3),
-  "PuntoEcologico"    NUMERIC(12,3),
-  "Extintor"          NUMERIC(12,3)
+-- 5.4 SST – Ambiental
+CREATE TABLE IF NOT EXISTS bd_sst_ambiental (
+  id                UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  folio             TEXT NOT NULL REFERENCES registros_reporte_diario(folio) ON DELETE CASCADE,
+  observaciones     TEXT,
+  longitud          DOUBLE PRECISION,
+  latitud           DOUBLE PRECISION,
+  botiquin          NUMERIC(12,3),
+  kit_antiderrames  NUMERIC(12,3),
+  punto_hidratacion NUMERIC(12,3),
+  punto_ecologico   NUMERIC(12,3),
+  extintor          NUMERIC(12,3)
 );
 
 
 -- ════════════════════════════════════════════════════════════
 -- 6. REGISTROS FOTOGRÁFICOS
---    Fuente: RF_Cantidades.gpkg · RF_Componentes.gpkg · RF_ReporteDiario.gpkg
---    Relación QGis: [tabla].ID_Unico → [formulario].ID_Unico  (Composition)
+--    FK: id_unico → [formulario].id_unico
 -- ════════════════════════════════════════════════════════════
 
--- 6.1 Fotos de cantidades  (RF_Cantidades)
-CREATE TABLE IF NOT EXISTS "RF_Cantidades" (
-  id                UUID DEFAULT gen_random_uuid() PRIMARY KEY,
-  "Folio"           TEXT,
-  "ID_Unico"        TEXT NOT NULL REFERENCES registros_cantidades("ID_Unico") ON DELETE CASCADE,
-  "Observacion"     TEXT,
-  "Nombre_Foto"     TEXT,
-  "Ruta_Destino_Foto" TEXT
+-- 6.1 Fotos de cantidades
+CREATE TABLE IF NOT EXISTS rf_cantidades (
+  id               UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  folio            TEXT,
+  id_unico         TEXT NOT NULL REFERENCES registros_cantidades(id_unico) ON DELETE CASCADE,
+  observacion      TEXT,
+  nombre_foto      TEXT,
+  ruta_destino_foto TEXT
 );
 
--- 6.2 Fotos de componentes  (RF_Componentes)
-CREATE TABLE IF NOT EXISTS "RF_Componentes" (
-  id              UUID DEFAULT gen_random_uuid() PRIMARY KEY,
-  "Folio"         TEXT,
-  "ID_Unico"      TEXT NOT NULL REFERENCES registros_componentes("ID_Unico") ON DELETE CASCADE,
-  "Observaciones" TEXT,
-  "Foto"          TEXT
+-- 6.2 Fotos de componentes
+CREATE TABLE IF NOT EXISTS rf_componentes (
+  id            UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  folio         TEXT,
+  id_unico      TEXT NOT NULL REFERENCES registros_componentes(id_unico) ON DELETE CASCADE,
+  observaciones TEXT,
+  foto          TEXT
 );
 
--- 6.3 Fotos de reporte diario  (RF_ReporteDiario)
-CREATE TABLE IF NOT EXISTS "RF_ReporteDiario" (
-  id              UUID DEFAULT gen_random_uuid() PRIMARY KEY,
-  "Folio"         TEXT,
-  "ID_Unico"      TEXT NOT NULL REFERENCES registros_reporteDiario("ID_Unico") ON DELETE CASCADE,
-  "Observaciones" TEXT,
-  "Foto"          TEXT
+-- 6.3 Fotos de reporte diario
+CREATE TABLE IF NOT EXISTS rf_reporte_diario (
+  id            UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  folio         TEXT,
+  id_unico      TEXT NOT NULL REFERENCES registros_reporte_diario(id_unico) ON DELETE CASCADE,
+  observaciones TEXT,
+  foto          TEXT
 );
 
 
 -- ════════════════════════════════════════════════════════════
 -- 7. FORMULARIOS GEOGRÁFICOS ADICIONALES
---    Fuente: Formulario_PMT.gpkg
 -- ════════════════════════════════════════════════════════════
 
--- 7.1 Formulario PMT  (Formulario_PMT)
 CREATE TABLE IF NOT EXISTS formulario_pmt (
-  id               UUID DEFAULT gen_random_uuid() PRIMARY KEY,
-  "Folio"          TEXT UNIQUE NOT NULL,
-  contrato_id      TEXT REFERENCES contratos(id),
-  descripcion      TEXT,
-  "CIV"            TEXT,
-  inicio_vigencia  DATE,
-  fin_vigencia     DATE,
-  fecha_creacion   TIMESTAMPTZ DEFAULT NOW(),
-  usuario          TEXT,
-  latitud          DOUBLE PRECISION,
-  longitud         DOUBLE PRECISION
+  id              UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  folio           TEXT UNIQUE NOT NULL,
+  contrato_id     TEXT REFERENCES contratos(id),
+  descripcion     TEXT,
+  civ             TEXT,
+  inicio_vigencia DATE,
+  fin_vigencia    DATE,
+  fecha_creacion  TIMESTAMPTZ DEFAULT NOW(),
+  usuario         TEXT,
+  latitud         DOUBLE PRECISION,
+  longitud        DOUBLE PRECISION
 );
 
 
@@ -531,7 +498,6 @@ CREATE TABLE IF NOT EXISTS formulario_pmt (
 -- 8. AUDITORÍA Y FLUJO
 -- ════════════════════════════════════════════════════════════
 
--- 8.1 Historial de estados de cantidades
 CREATE TABLE IF NOT EXISTS historial_estados (
   id              UUID DEFAULT gen_random_uuid() PRIMARY KEY,
   registro_id     UUID REFERENCES registros_cantidades(id),
@@ -543,7 +509,6 @@ CREATE TABLE IF NOT EXISTS historial_estados (
   ip              TEXT
 );
 
--- 8.2 Cierres semanales
 CREATE TABLE IF NOT EXISTS cierres_semanales (
   id                   UUID DEFAULT gen_random_uuid() PRIMARY KEY,
   contrato_id          TEXT REFERENCES contratos(id),
@@ -562,14 +527,12 @@ CREATE TABLE IF NOT EXISTS cierres_semanales (
   creado_en            TIMESTAMPTZ DEFAULT NOW()
 );
 
--- 8.3 Relación N:M cierres ↔ registros de cantidades
 CREATE TABLE IF NOT EXISTS cierre_registros (
   cierre_id   UUID REFERENCES cierres_semanales(id),
   registro_id UUID REFERENCES registros_cantidades(id),
   PRIMARY KEY (cierre_id, registro_id)
 );
 
--- 8.4 Notificaciones
 CREATE TABLE IF NOT EXISTS notificaciones (
   id           UUID DEFAULT gen_random_uuid() PRIMARY KEY,
   registro_id  UUID REFERENCES registros_cantidades(id),
