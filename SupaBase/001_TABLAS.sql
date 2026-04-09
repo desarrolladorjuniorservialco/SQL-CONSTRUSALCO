@@ -14,6 +14,17 @@
 --   [6] NORMALIZACIÓN COMPLETA    : todos los nombres de columna en minúsculas
 --                                   sin comillas dobles — elimina el error
 --                                   42703 "column Folio does not exist"
+--   [7] FKs eliminadas en forms   : resultado del análisis completo de riesgo:
+--       SIN FK (datos de campo libre, pueden no coincidir con catálogos):
+--         registros_cantidades/componentes: id_tramo, tipo_actividad,
+--                                           codigo_elemento, tipo_infra
+--         rf_*.id_unico: FK opcional (SET NULL) — puede haber registros RF
+--                        cuyo formulario padre fue omitido por falta de folio
+--       CON FK (el sync garantiza consistencia):
+--         tramos_bd.infraestructura → tramos_aux_infra(codigo)
+--         presupuesto_bd.tipo_actividad → presupuesto_aux_actividad
+--         bd_*.folio → registros_reporte_diario.folio
+--         registros_*.contrato_id → contratos(id)
 --
 --   RELACIONES QGis (SIG_IDU-1556-2025_cloud.qgs)
 --   • bd_personal_obra.folio       → registros_reporte_diario.folio
@@ -23,9 +34,9 @@
 --   • rf_cantidades.id_unico       → registros_cantidades.id_unico
 --   • rf_componentes.id_unico      → registros_componentes.id_unico
 --   • rf_reporte_diario.id_unico   → registros_reporte_diario.id_unico
---   • registros_cantidades.tipo_infra  → tramos_aux_infra(codigo)
---   • registros_componentes.tipo_infra → tramos_aux_infra(codigo)
 --   • tramos_bd.infraestructura        → tramos_aux_infra(codigo)
+--   NOTA: codigo_elemento y tipo_infra en registros_cantidades/componentes
+--         son TEXT libres — los valores del campo no coinciden con los catálogos
 -- ============================================================
 
 
@@ -196,11 +207,11 @@ CREATE TABLE IF NOT EXISTS registros_cantidades (
   usuario_qfield             TEXT,
 
   -- Localización y elemento
-  id_tramo                   TEXT REFERENCES tramos_bd(id_tramo),
+  id_tramo                   TEXT,  -- sin FK: valor del formulario QField, puede no estar en tramos_bd
   tramo_descripcion          TEXT,
   civ                        TEXT,
-  codigo_elemento            TEXT REFERENCES presupuesto_bd(codigo_idu),
-  tipo_infra                 TEXT REFERENCES tramos_aux_infra(codigo),
+  codigo_elemento            TEXT,  -- sin FK: identificador de elemento físico en vía
+  tipo_infra                 TEXT,  -- sin FK: valor libre del formulario QField
   latitud                    DOUBLE PRECISION,
   longitud                   DOUBLE PRECISION,
 
@@ -209,7 +220,7 @@ CREATE TABLE IF NOT EXISTS registros_cantidades (
   fecha_fin                  DATE,
 
   -- Clasificación de actividad
-  tipo_actividad             TEXT REFERENCES presupuesto_aux_actividad(tipo_actividad),
+  tipo_actividad             TEXT,  -- sin FK: texto libre del formulario, no normalizado contra catálogo
   capitulo_num               TEXT,
   capitulo                   TEXT,
   item_pago                  TEXT,
@@ -276,11 +287,11 @@ CREATE TABLE IF NOT EXISTS registros_componentes (
   usuario_qfield             TEXT,
 
   -- Localización y elemento
-  id_tramo                   TEXT REFERENCES tramos_bd(id_tramo),
+  id_tramo                   TEXT,  -- sin FK: valor del formulario QField
   tramo                      TEXT,
   civ                        TEXT,
-  codigo_elemento            TEXT REFERENCES presupuesto_componentes_bd(codigo_idu),
-  tipo_infra                 TEXT REFERENCES tramos_aux_infra(codigo),
+  codigo_elemento            TEXT,  -- sin FK: identificador de elemento físico en vía
+  tipo_infra                 TEXT,  -- sin FK: valor libre del formulario QField
   componente                 TEXT,
   latitud                    DOUBLE PRECISION,
   longitud                   DOUBLE PRECISION,
@@ -290,7 +301,7 @@ CREATE TABLE IF NOT EXISTS registros_componentes (
   fecha_reporte              DATE,
 
   -- Clasificación de actividad
-  tipo_actividad             TEXT REFERENCES presupuesto_aux_actividad(tipo_actividad),
+  tipo_actividad             TEXT,  -- sin FK: texto libre del formulario
   capitulo_num               TEXT,
   capitulo                   TEXT,
   item_pago                  TEXT,
@@ -450,7 +461,7 @@ CREATE TABLE IF NOT EXISTS bd_sst_ambiental (
 CREATE TABLE IF NOT EXISTS rf_cantidades (
   id               UUID DEFAULT gen_random_uuid() PRIMARY KEY,
   folio            TEXT,
-  id_unico         TEXT NOT NULL REFERENCES registros_cantidades(id_unico) ON DELETE CASCADE,
+  id_unico         TEXT REFERENCES registros_cantidades(id_unico) ON DELETE SET NULL,  -- opcional: el registro padre puede no existir aún
   observacion      TEXT,
   nombre_foto      TEXT,
   ruta_destino_foto TEXT
@@ -460,7 +471,7 @@ CREATE TABLE IF NOT EXISTS rf_cantidades (
 CREATE TABLE IF NOT EXISTS rf_componentes (
   id            UUID DEFAULT gen_random_uuid() PRIMARY KEY,
   folio         TEXT,
-  id_unico      TEXT NOT NULL REFERENCES registros_componentes(id_unico) ON DELETE CASCADE,
+  id_unico      TEXT REFERENCES registros_componentes(id_unico) ON DELETE SET NULL,  -- opcional
   observaciones TEXT,
   foto          TEXT
 );
@@ -469,7 +480,7 @@ CREATE TABLE IF NOT EXISTS rf_componentes (
 CREATE TABLE IF NOT EXISTS rf_reporte_diario (
   id            UUID DEFAULT gen_random_uuid() PRIMARY KEY,
   folio         TEXT,
-  id_unico      TEXT NOT NULL REFERENCES registros_reporte_diario(id_unico) ON DELETE CASCADE,
+  id_unico      TEXT REFERENCES registros_reporte_diario(id_unico) ON DELETE SET NULL,  -- opcional
   observaciones TEXT,
   foto          TEXT
 );
