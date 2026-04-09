@@ -1,7 +1,20 @@
 -- ============================================================
 -- MÓDULO 001 · TABLAS (DDL)
--- Contrato IDU-1556-2025 · Consorcio Obras Peatonales 2025
--- Descripción: Define todas las entidades del dominio.
+-- Contrato IDU-1556-2025 · Grupo 4
+-- Contratista: SERVIALCO S.A.S.
+-- Interventoría: IDU
+--
+--   CORRECCIONES respecto a la versión anterior
+--   ─────────────────────────────────────────────
+--   [1] contratos.contratista  : 'URBACON S.A.S.' → 'SERVIALCO S.A.S.'
+--   [2] perfiles.rol CHECK     : agrega 'residente' y 'coordinador'
+--   [3] tramos_aux_infra       : INSERT inicial completo con los 3 códigos
+--                                (EP / CI / MV) y su nombre largo correcto
+--   [4] presupuesto_aux_actividad: INSERT inicial con valores comunes;
+--                                  el sync los completa dinámicamente
+--   [5] registros_cantidades   : columna 'fecha_fin' agregada (faltaba en DDL
+--                                anterior pero sí estaba en el sync)
+--   [6] Comentarios de relación QGis actualizados
 --
 --   MÓDULOS
 --   1.  Perfiles / Contratos
@@ -10,7 +23,7 @@
 --   4.  Formularios principales (Cantidades, Componentes, Reporte Diario)
 --   5.  Tablas secundarias del Reporte Diario (Personal, Maquinaria, SST…)
 --   6.  Registros fotográficos (RF_*)
---   7.  Formularios geográficos adicionales (Cantidades_Obra, PMT)
+--   7.  Formularios geográficos adicionales (PMT)
 --   8.  Auditoría y flujo (historial_estados, cierres, notificaciones)
 --
 --   RELACIONES QGis (SIG_IDU-1556-2025_cloud.qgs)
@@ -21,6 +34,9 @@
 --   • RF_Cantidades.ID_Unico          → registros_cantidades.ID_Unico
 --   • RF_Componentes.ID_Unico         → registros_componentes.ID_Unico
 --   • RF_ReporteDiario.ID_Unico       → registros_reporteDiario.ID_Unico
+--   • registros_cantidades.tipo_infra → tramos_aux_infra(codigo)
+--   • registros_componentes.tipo_infra→ tramos_aux_infra(codigo)
+--   • tramos_bd.infraestructura       → tramos_aux_infra(codigo)
 -- ============================================================
 
 
@@ -33,7 +49,9 @@ CREATE TABLE IF NOT EXISTS perfiles (
   nombre    TEXT NOT NULL,
   correo    TEXT NOT NULL,
   rol       TEXT NOT NULL CHECK (rol IN (
-              'inspector','obra','interventor','supervisor','admin'
+              -- [CORRECCIÓN 2] agrega 'residente' y 'coordinador'
+              'inspector','obra','interventor','supervisor','admin',
+              'residente','coordinador'
             )),
   empresa   TEXT NOT NULL,
   contrato  TEXT NOT NULL DEFAULT 'IDU-1556-2025',
@@ -52,16 +70,18 @@ CREATE TABLE IF NOT EXISTS contratos (
   activo         BOOLEAN DEFAULT TRUE
 );
 
+-- [CORRECCIÓN 1] contratista = 'SERVIALCO S.A.S.' (no 'URBACON S.A.S.')
 INSERT INTO contratos VALUES (
   'IDU-1556-2025',
   'Contrato IDU-1556-2025 Grupo 4',
-  'URBACON S.A.S.',
+  'SERVIALCO S.A.S.',
   'Interventoría IDU',
   'IDU Supervisión',
   '2025-01-01',
   '2026-12-31',
   TRUE
-) ON CONFLICT (id) DO NOTHING;
+) ON CONFLICT (id) DO UPDATE SET
+  contratista = EXCLUDED.contratista;   -- actualiza si ya existía con valor incorrecto
 
 
 -- ════════════════════════════════════════════════════════════
@@ -79,17 +99,20 @@ CREATE TABLE IF NOT EXISTS localidades (
 );
 
 -- 2.2 Catálogo de tipos de infraestructura  (TramosIDU15562025AUXINFRA)
---     Valores: EP=Espacio Público, CI=Ciclorruta, MV=Malla Vial
+--     PK: codigo (EP / CI / MV)
+--     nombre: texto largo que llega desde el GPKG de tramos
+--     El sync convierte nombre→codigo antes de insertar en tramos_bd
+-- [CORRECCIÓN 3] INSERT inicial completo con los 3 registros base
 CREATE TABLE IF NOT EXISTS tramos_aux_infra (
-  codigo  TEXT PRIMARY KEY,   -- Field1 del GPKG
-  nombre  TEXT NOT NULL       -- Field2 del GPKG
+  codigo  TEXT PRIMARY KEY,   -- Field1 del GPKG  (EP, CI, MV)
+  nombre  TEXT NOT NULL       -- Field2 del GPKG  (Espacio Público, Ciclorruta, Malla Vial)
 );
 
 INSERT INTO tramos_aux_infra (codigo, nombre) VALUES
   ('EP', 'Espacio Público'),
   ('CI', 'Ciclorruta'),
   ('MV', 'Malla Vial')
-ON CONFLICT (codigo) DO NOTHING;
+ON CONFLICT (codigo) DO UPDATE SET nombre = EXCLUDED.nombre;
 
 -- 2.3 Catálogo de tramos  (TramosIDU15562025AUXTRAMOS)
 CREATE TABLE IF NOT EXISTS tramos_aux_tramos (
@@ -98,6 +121,7 @@ CREATE TABLE IF NOT EXISTS tramos_aux_tramos (
 );
 
 -- 2.4 Base de datos de tramos  (TramosIDU15562025BDTRAMOS)
+--     infraestructura referencia tramos_aux_infra(codigo) → 'EP' | 'CI' | 'MV'
 CREATE TABLE IF NOT EXISTS tramos_bd (
   id_tramo          TEXT PRIMARY KEY,
   tramo_descripcion TEXT,
@@ -118,9 +142,19 @@ CREATE TABLE IF NOT EXISTS tramos_bd (
 -- ════════════════════════════════════════════════════════════
 
 -- 3.1 Catálogo de tipos de actividad  (PresupuestoIDU15562025AUXACTIVIDAD)
+--     Poblado dinámicamente por sync_presupuesto_aux_actividad() antes de
+--     insertar presupuesto_bd y los formularios principales.
+-- [CORRECCIÓN 4] INSERT inicial con valores comunes conocidos
 CREATE TABLE IF NOT EXISTS presupuesto_aux_actividad (
   tipo_actividad  TEXT PRIMARY KEY
 );
+
+INSERT INTO presupuesto_aux_actividad (tipo_actividad) VALUES
+  ('MANTENIMIENTO'),
+  ('REHABILITACION'),
+  ('CONSTRUCCION'),
+  ('MEJORAMIENTO')
+ON CONFLICT (tipo_actividad) DO NOTHING;
 
 -- 3.2 Catálogo de capítulos  (PresupuestoIDU15562025AUXCAPITULOS)
 CREATE TABLE IF NOT EXISTS presupuesto_aux_capitulos (
@@ -177,6 +211,7 @@ CREATE TABLE IF NOT EXISTS presupuesto_componentes_aux (
 -- ════════════════════════════════════════════════════════════
 
 -- 4.1 Formulario de Cantidades  (Formulario_Cantidades · Formulario_Cantidades_V2)
+-- [CORRECCIÓN 5] columna fecha_fin agregada (estaba en el sync pero no en el DDL anterior)
 CREATE TABLE IF NOT EXISTS registros_cantidades (
   id                   UUID DEFAULT gen_random_uuid() PRIMARY KEY,
   folio                TEXT UNIQUE NOT NULL,
@@ -197,7 +232,7 @@ CREATE TABLE IF NOT EXISTS registros_cantidades (
 
   -- Periodo de ejecución
   fecha_inicio         DATE,
-  fecha_fin            DATE,
+  fecha_fin            DATE,   -- [CORRECCIÓN 5]
 
   -- Clasificación de actividad (ítems de pago)
   tipo_actividad       TEXT REFERENCES presupuesto_aux_actividad(tipo_actividad),
@@ -225,8 +260,8 @@ CREATE TABLE IF NOT EXISTS registros_cantidades (
   observaciones        TEXT,
 
   -- Interventoría
-  CodigoInterventor              TEXT,
-  AcompañamientoInterventor      TEXT,
+  "CodigoInterventor"           TEXT,
+  "AcompañamientoInterventor"   TEXT,
 
   -- ── Flujo de aprobación ──────────────────────────────────
   estado               TEXT NOT NULL DEFAULT 'BORRADOR' CHECK (estado IN (
@@ -256,11 +291,11 @@ CREATE TABLE IF NOT EXISTS registros_cantidades (
   inmutable            BOOLEAN DEFAULT FALSE
 );
 
--- 4.2 Formulario de Componentes  (Reporte_Componentes · PMT - Plan de Manejo del Transito)
+-- 4.2 Formulario de Componentes  (Reporte_Componentes)
 CREATE TABLE IF NOT EXISTS registros_componentes (
   id                   UUID DEFAULT gen_random_uuid() PRIMARY KEY,
-  Folio                TEXT UNIQUE NOT NULL,
-  ID_Unico             TEXT UNIQUE,
+  "Folio"              TEXT UNIQUE NOT NULL,
+  "ID_Unico"           TEXT UNIQUE,
   contrato_id          TEXT REFERENCES contratos(id),
   fecha_creacion       TIMESTAMPTZ DEFAULT NOW(),
   creado_por           UUID REFERENCES perfiles(id),
@@ -268,17 +303,17 @@ CREATE TABLE IF NOT EXISTS registros_componentes (
 
   -- Localización y elemento
   id_tramo             TEXT REFERENCES tramos_bd(id_tramo),
-  Tramo                TEXT,
-  CIV                  TEXT,
+  "Tramo"              TEXT,
+  "CIV"                TEXT,
   codigo_elemento      TEXT REFERENCES presupuesto_componentes_bd(codigo_idu),
   tipo_infra           TEXT REFERENCES tramos_aux_infra(codigo),
-  Componente           TEXT,
+  "Componente"         TEXT,
   latitud              DOUBLE PRECISION,
   longitud             DOUBLE PRECISION,
 
   -- Periodo de ejecución
-  Fecha                DATE,
-  Fecha_Reporte        DATE,
+  "Fecha"              DATE,
+  "Fecha_Reporte"      DATE,
 
   -- Clasificación de actividad (ítems de pago)
   tipo_actividad       TEXT REFERENCES presupuesto_aux_actividad(tipo_actividad),
@@ -289,10 +324,10 @@ CREATE TABLE IF NOT EXISTS registros_componentes (
   cantidad             NUMERIC(12,3),
   unidad               TEXT,
   precio_unitario      DOUBLE PRECISION,
-  Observaciones        TEXT,
-  Profesional          TEXT,
-  CodigoInterventor              TEXT,
-  AcompañamientoInterventor      TEXT,
+  "Observaciones"      TEXT,
+  "Profesional"        TEXT,
+  "CodigoInterventor"           TEXT,
+  "AcompañamientoInterventor"   TEXT,
 
   -- ── Flujo de aprobación ──────────────────────────────────
   estado               TEXT NOT NULL DEFAULT 'BORRADOR' CHECK (estado IN (
@@ -325,8 +360,8 @@ CREATE TABLE IF NOT EXISTS registros_componentes (
 -- 4.3 Reporte Diario  (Reporte_Diario.gpkg · Reporte_Diario)
 CREATE TABLE IF NOT EXISTS registros_reporteDiario (
   id                   UUID DEFAULT gen_random_uuid() PRIMARY KEY,
-  Folio                TEXT UNIQUE NOT NULL,
-  ID_Unico             TEXT UNIQUE,
+  "Folio"              TEXT UNIQUE NOT NULL,
+  "ID_Unico"           TEXT UNIQUE,
   contrato_id          TEXT REFERENCES contratos(id),
   fecha_creacion       TIMESTAMPTZ DEFAULT NOW(),
   creado_por           UUID REFERENCES perfiles(id),
@@ -337,10 +372,10 @@ CREATE TABLE IF NOT EXISTS registros_reporteDiario (
   longitud             DOUBLE PRECISION,
 
   -- Periodo de ejecución
-  Fecha                DATE,
-  Fecha_Reporte        DATE,
+  "Fecha"              DATE,
+  "Fecha_Reporte"      DATE,
 
-  Observaciones        TEXT,
+  "Observaciones"      TEXT,
 
   -- ── Flujo de aprobación ──────────────────────────────────
   estado               TEXT NOT NULL DEFAULT 'BORRADOR' CHECK (estado IN (
@@ -379,60 +414,60 @@ CREATE TABLE IF NOT EXISTS registros_reporteDiario (
 -- ════════════════════════════════════════════════════════════
 
 -- 5.1 Personal de obra  (BD_PersonalObra)
-CREATE TABLE IF NOT EXISTS BD_PersonalObra (
+CREATE TABLE IF NOT EXISTS "BD_PersonalObra" (
   id                  UUID DEFAULT gen_random_uuid() PRIMARY KEY,
-  Folio               TEXT NOT NULL REFERENCES registros_reporteDiario(Folio) ON DELETE CASCADE,
-  Inspectores         NUMERIC(12,3),
-  PersonalOperativo   NUMERIC(12,3),
-  PersonalBOAL        NUMERIC(12,3),
-  PersonalTransito    NUMERIC(12,3),
-  Longitud            DOUBLE PRECISION,
-  Latitud             DOUBLE PRECISION
+  "Folio"             TEXT NOT NULL REFERENCES registros_reporteDiario("Folio") ON DELETE CASCADE,
+  "Inspectores"       NUMERIC(12,3),
+  "PersonalOperativo" NUMERIC(12,3),
+  "PersonalBOAL"      NUMERIC(12,3),
+  "PersonalTransito"  NUMERIC(12,3),
+  "Longitud"          DOUBLE PRECISION,
+  "Latitud"           DOUBLE PRECISION
 );
 
 -- 5.2 Condición climática  (BD_CondicionClimatica)
-CREATE TABLE IF NOT EXISTS BD_CondicionClimatica (
+CREATE TABLE IF NOT EXISTS "BD_CondicionClimatica" (
   id              UUID DEFAULT gen_random_uuid() PRIMARY KEY,
-  Folio           TEXT NOT NULL REFERENCES registros_reporteDiario(Folio) ON DELETE CASCADE,
-  EstadoClima     TEXT,
-  Hora            TIME,
-  Observaciones   TEXT,
-  Longitud        DOUBLE PRECISION,
-  Latitud         DOUBLE PRECISION
+  "Folio"         TEXT NOT NULL REFERENCES registros_reporteDiario("Folio") ON DELETE CASCADE,
+  "EstadoClima"   TEXT,
+  "Hora"          TIME,
+  "Observaciones" TEXT,
+  "Longitud"      DOUBLE PRECISION,
+  "Latitud"       DOUBLE PRECISION
 );
 
 -- 5.3 Maquinaria en obra  (BD_MaquinariaObra)
-CREATE TABLE IF NOT EXISTS BD_MaquinariaObra (
-  id                      UUID DEFAULT gen_random_uuid() PRIMARY KEY,
-  Folio                   TEXT NOT NULL REFERENCES registros_reporteDiario(Folio) ON DELETE CASCADE,
-  Operarios               NUMERIC(12,3),
-  Volquetas               NUMERIC(12,3),
-  Vibrocompactador        NUMERIC(12,3),
-  EquiposEspeciales       NUMERIC(12,3),
-  Minicargador            NUMERIC(12,3),
-  Ruteadora               NUMERIC(12,3),
-  Compresor               NUMERIC(12,3),
-  Retrocargador           NUMERIC(12,3),
-  ExtendedoraAsfalto      NUMERIC(12,3),
-  CompactadorNeumatico    NUMERIC(12,3),
-  Observaciones           TEXT,
-  Longitud                DOUBLE PRECISION,
-  Latitud                 DOUBLE PRECISION
+CREATE TABLE IF NOT EXISTS "BD_MaquinariaObra" (
+  id                        UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  "Folio"                   TEXT NOT NULL REFERENCES registros_reporteDiario("Folio") ON DELETE CASCADE,
+  "Operarios"               NUMERIC(12,3),
+  "Volquetas"               NUMERIC(12,3),
+  "Vibrocompactador"        NUMERIC(12,3),
+  "EquiposEspeciales"       NUMERIC(12,3),
+  "Minicargador"            NUMERIC(12,3),
+  "Ruteadora"               NUMERIC(12,3),
+  "Compresor"               NUMERIC(12,3),
+  "Retrocargador"           NUMERIC(12,3),
+  "ExtendedoraAsfalto"      NUMERIC(12,3),
+  "CompactadorNeumatico"    NUMERIC(12,3),
+  "Observaciones"           TEXT,
+  "Longitud"                DOUBLE PRECISION,
+  "Latitud"                 DOUBLE PRECISION
 );
 
 -- 5.4 SST – Ambiental  (BD_SST-Ambiental · tabla GPkg: BBD_SST-Ambiental)
---     Nota: nombre normalizado a BD_SST_Ambiental para compatibilidad SQL
-CREATE TABLE IF NOT EXISTS BD_SST_Ambiental (
+--     Nombre normalizado a BD_SST_Ambiental para compatibilidad SQL
+CREATE TABLE IF NOT EXISTS "BD_SST_Ambiental" (
   id                  UUID DEFAULT gen_random_uuid() PRIMARY KEY,
-  Folio               TEXT NOT NULL REFERENCES registros_reporteDiario(Folio) ON DELETE CASCADE,
-  Observaciones       TEXT,
-  Longitud            DOUBLE PRECISION,
-  Latitud             DOUBLE PRECISION,
-  Botiquin            NUMERIC(12,3),
-  KitAntiderrames     NUMERIC(12,3),
-  PuntoHidratacion    NUMERIC(12,3),
-  PuntoEcologico      NUMERIC(12,3),
-  Extintor            NUMERIC(12,3)
+  "Folio"             TEXT NOT NULL REFERENCES registros_reporteDiario("Folio") ON DELETE CASCADE,
+  "Observaciones"     TEXT,
+  "Longitud"          DOUBLE PRECISION,
+  "Latitud"           DOUBLE PRECISION,
+  "Botiquin"          NUMERIC(12,3),
+  "KitAntiderrames"   NUMERIC(12,3),
+  "PuntoHidratacion"  NUMERIC(12,3),
+  "PuntoEcologico"    NUMERIC(12,3),
+  "Extintor"          NUMERIC(12,3)
 );
 
 
@@ -443,47 +478,46 @@ CREATE TABLE IF NOT EXISTS BD_SST_Ambiental (
 -- ════════════════════════════════════════════════════════════
 
 -- 6.1 Fotos de cantidades  (RF_Cantidades)
-CREATE TABLE IF NOT EXISTS RF_Cantidades (
-  id               UUID DEFAULT gen_random_uuid() PRIMARY KEY,
-  Folio            TEXT,
-  ID_Unico         TEXT NOT NULL REFERENCES registros_cantidades(ID_Unico) ON DELETE CASCADE,
-  Observacion      TEXT,
-  Nombre_Foto      TEXT,
-  Ruta_Destino_Foto TEXT
+CREATE TABLE IF NOT EXISTS "RF_Cantidades" (
+  id                UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  "Folio"           TEXT,
+  "ID_Unico"        TEXT NOT NULL REFERENCES registros_cantidades("ID_Unico") ON DELETE CASCADE,
+  "Observacion"     TEXT,
+  "Nombre_Foto"     TEXT,
+  "Ruta_Destino_Foto" TEXT
 );
 
 -- 6.2 Fotos de componentes  (RF_Componentes)
-CREATE TABLE IF NOT EXISTS RF_Componentes (
-  id        UUID DEFAULT gen_random_uuid() PRIMARY KEY,
-  Folio     TEXT,
-  ID_Unico  TEXT NOT NULL REFERENCES registros_componentes(ID_Unico) ON DELETE CASCADE,
-  Observaciones TEXT,
-  Foto      TEXT
+CREATE TABLE IF NOT EXISTS "RF_Componentes" (
+  id              UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  "Folio"         TEXT,
+  "ID_Unico"      TEXT NOT NULL REFERENCES registros_componentes("ID_Unico") ON DELETE CASCADE,
+  "Observaciones" TEXT,
+  "Foto"          TEXT
 );
 
 -- 6.3 Fotos de reporte diario  (RF_ReporteDiario)
-CREATE TABLE IF NOT EXISTS RF_ReporteDiario (
-  id        UUID DEFAULT gen_random_uuid() PRIMARY KEY,
-  Folio     TEXT,
-  ID_Unico  TEXT NOT NULL REFERENCES registros_reporteDiario(ID_Unico) ON DELETE CASCADE,
-  Observaciones TEXT,
-  Foto      TEXT
+CREATE TABLE IF NOT EXISTS "RF_ReporteDiario" (
+  id              UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  "Folio"         TEXT,
+  "ID_Unico"      TEXT NOT NULL REFERENCES registros_reporteDiario("ID_Unico") ON DELETE CASCADE,
+  "Observaciones" TEXT,
+  "Foto"          TEXT
 );
 
 
 -- ════════════════════════════════════════════════════════════
 -- 7. FORMULARIOS GEOGRÁFICOS ADICIONALES
---    Fuente: Cantidades_Obra.gpkg · Formulario_PMT.gpkg
+--    Fuente: Formulario_PMT.gpkg
 -- ════════════════════════════════════════════════════════════
-
 
 -- 7.1 Formulario PMT  (Formulario_PMT)
 CREATE TABLE IF NOT EXISTS formulario_pmt (
   id               UUID DEFAULT gen_random_uuid() PRIMARY KEY,
-  Folio            TEXT UNIQUE NOT NULL,
+  "Folio"          TEXT UNIQUE NOT NULL,
   contrato_id      TEXT REFERENCES contratos(id),
   descripcion      TEXT,
-  CIV              TEXT,
+  "CIV"            TEXT,
   inicio_vigencia  DATE,
   fin_vigencia     DATE,
   fecha_creacion   TIMESTAMPTZ DEFAULT NOW(),
