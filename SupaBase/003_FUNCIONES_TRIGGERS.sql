@@ -1,14 +1,32 @@
 -- ============================================================
--- MÓDULO 003_FUNCIONES Y TRIGGERS v3
+-- MÓDULO 003 · FUNCIONES Y TRIGGERS v4
 -- Contrato IDU-1556-2025 · Consorcio Obras Peatonales 2025
--- Cambios v3:
---   - log_cambio_estado: SECURITY DEFINER para evitar bloqueo RLS
---   - crear_notificacion: filtro de estado movido al cuerpo de la
---     función (TG_OP no es válido en cláusula WHEN de trigger)
---   - tg_notificacion: WHEN eliminado, lógica en la función
+--
+--   BUG CRÍTICO CORREGIDO
+--   ─────────────────────────────────────────────
+--   El módulo original registraba los 3 triggers sobre la tabla
+--   'registros', que NO EXISTE en el DDL. Las tablas reales son:
+--     • registros_cantidades
+--     • registros_componentes
+--     • registros_reporte_diario
+--
+--   Consecuencia: DROP TRIGGER ... ON registros fallaba con error,
+--   impidiendo que se creara cualquier trigger. Ninguna de las
+--   3 funciones (inmutabilidad, historial, notificaciones) operaba.
+--
+--   Corrección v4:
+--   [1] Los 3 triggers se registran en las 3 tablas reales.
+--   [2] log_cambio_estado incluye tabla_origen en el INSERT a
+--       historial_estados (alineado con BUG-001 del módulo 001).
+--   [3] crear_notificacion incluye tabla_origen en el INSERT a
+--       notificaciones (alineado con BUG-002 del módulo 001).
 -- ============================================================
 
--- ── FUNCIÓN 1: Inmutabilidad al aprobar ───────────────────────
+
+-- ════════════════════════════════════════════════════════════
+-- FUNCIÓN 1: Inmutabilidad al aprobar
+-- ════════════════════════════════════════════════════════════
+
 CREATE OR REPLACE FUNCTION marcar_inmutable()
 RETURNS TRIGGER AS $$
 BEGIN
@@ -20,29 +38,54 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql SET search_path = public;
 
-DROP TRIGGER IF EXISTS tg_inmutable ON registros;
-
+-- registros_cantidades
+DROP TRIGGER IF EXISTS tg_inmutable ON registros_cantidades;
 CREATE TRIGGER tg_inmutable
-  BEFORE UPDATE ON registros
+  BEFORE UPDATE ON registros_cantidades
+  FOR EACH ROW
+  EXECUTE FUNCTION marcar_inmutable();
+
+-- registros_componentes
+DROP TRIGGER IF EXISTS tg_inmutable ON registros_componentes;
+CREATE TRIGGER tg_inmutable
+  BEFORE UPDATE ON registros_componentes
+  FOR EACH ROW
+  EXECUTE FUNCTION marcar_inmutable();
+
+-- registros_reporte_diario
+DROP TRIGGER IF EXISTS tg_inmutable ON registros_reporte_diario;
+CREATE TRIGGER tg_inmutable
+  BEFORE UPDATE ON registros_reporte_diario
   FOR EACH ROW
   EXECUTE FUNCTION marcar_inmutable();
 
 
--- ── FUNCIÓN 2: Log de cambios de estado ───────────────────────
--- SECURITY DEFINER: evita bloqueo RLS al insertar en historial_estados
--- desde contextos sin sesión (ej. sync QField via service_role).
+-- ════════════════════════════════════════════════════════════
+-- FUNCIÓN 2: Log de cambios de estado
+--
+-- SECURITY DEFINER: evita bloqueo RLS al insertar en
+-- historial_estados desde contextos sin sesión (sync QField
+-- via service_role).
+--
+-- [CORREGIDO] Incluye tabla_origen para identificar de qué
+-- formulario proviene el registro, ya que registro_id ya no
+-- tiene FK a registros_cantidades (BUG-001 módulo 001).
+-- ════════════════════════════════════════════════════════════
+
 CREATE OR REPLACE FUNCTION log_cambio_estado()
 RETURNS TRIGGER AS $$
 BEGIN
   IF OLD.estado IS DISTINCT FROM NEW.estado THEN
     INSERT INTO historial_estados (
       registro_id,
+      tabla_origen,
       estado_anterior,
       estado_nuevo,
       cambiado_por,
       observacion
     ) VALUES (
       NEW.id,
+      TG_TABLE_NAME,   -- 'registros_cantidades' | 'registros_componentes' | 'registros_reporte_diario'
       OLD.estado,
       NEW.estado,
       COALESCE(auth.uid(), NEW.creado_por),
@@ -58,27 +101,50 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public;
 
-DROP TRIGGER IF EXISTS tg_historial ON registros;
-
+-- registros_cantidades
+DROP TRIGGER IF EXISTS tg_historial ON registros_cantidades;
 CREATE TRIGGER tg_historial
-  AFTER UPDATE ON registros
+  AFTER UPDATE ON registros_cantidades
+  FOR EACH ROW
+  WHEN (OLD.estado IS DISTINCT FROM NEW.estado)
+  EXECUTE FUNCTION log_cambio_estado();
+
+-- registros_componentes
+DROP TRIGGER IF EXISTS tg_historial ON registros_componentes;
+CREATE TRIGGER tg_historial
+  AFTER UPDATE ON registros_componentes
+  FOR EACH ROW
+  WHEN (OLD.estado IS DISTINCT FROM NEW.estado)
+  EXECUTE FUNCTION log_cambio_estado();
+
+-- registros_reporte_diario
+DROP TRIGGER IF EXISTS tg_historial ON registros_reporte_diario;
+CREATE TRIGGER tg_historial
+  AFTER UPDATE ON registros_reporte_diario
   FOR EACH ROW
   WHEN (OLD.estado IS DISTINCT FROM NEW.estado)
   EXECUTE FUNCTION log_cambio_estado();
 
 
--- ── FUNCIÓN 3: Fan-out de notificaciones ──────────────────────
--- TG_OP se evalúa DENTRO del cuerpo de la función, no en WHEN.
--- El filtro de estado no cambiado se maneja aquí para evitar
--- notificaciones duplicadas por ediciones menores.
+-- ════════════════════════════════════════════════════════════
+-- FUNCIÓN 3: Fan-out de notificaciones
+--
 -- SECURITY DEFINER: necesario para leer perfiles sin restricción RLS.
+-- TG_OP se evalúa DENTRO del cuerpo de la función (no en WHEN).
+--
+-- [CORREGIDO] Incluye tabla_origen para que la notificación
+-- identifique de qué formulario proviene el registro, ya que
+-- notificaciones.registro_id ya no tiene FK a registros_cantidades
+-- (BUG-002 módulo 001).
+-- ════════════════════════════════════════════════════════════
+
 CREATE OR REPLACE FUNCTION crear_notificacion()
 RETURNS TRIGGER AS $$
 DECLARE
   tipo_notif   TEXT;
   asunto_notif TEXT;
 BEGIN
-  -- En UPDATE, salir inmediatamente si el estado no cambió
+  -- En UPDATE, salir si el estado no cambió
   IF TG_OP = 'UPDATE' AND OLD.estado IS NOT DISTINCT FROM NEW.estado THEN
     RETURN NEW;
   END IF;
@@ -106,9 +172,10 @@ BEGIN
   END IF;
 
   -- Insertar una notificación por cada usuario activo del contrato
-  INSERT INTO notificaciones (registro_id, destinatario, tipo, asunto)
+  INSERT INTO notificaciones (registro_id, tabla_origen, destinatario, tipo, asunto)
   SELECT
     NEW.id,
+    TG_TABLE_NAME,   -- nombre de la tabla que disparó el trigger
     id,
     tipo_notif,
     asunto_notif
@@ -120,9 +187,23 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public;
 
-DROP TRIGGER IF EXISTS tg_notificacion ON registros;
-
+-- registros_cantidades
+DROP TRIGGER IF EXISTS tg_notificacion ON registros_cantidades;
 CREATE TRIGGER tg_notificacion
-  AFTER INSERT OR UPDATE ON registros
+  AFTER INSERT OR UPDATE ON registros_cantidades
+  FOR EACH ROW
+  EXECUTE FUNCTION crear_notificacion();
+
+-- registros_componentes
+DROP TRIGGER IF EXISTS tg_notificacion ON registros_componentes;
+CREATE TRIGGER tg_notificacion
+  AFTER INSERT OR UPDATE ON registros_componentes
+  FOR EACH ROW
+  EXECUTE FUNCTION crear_notificacion();
+
+-- registros_reporte_diario
+DROP TRIGGER IF EXISTS tg_notificacion ON registros_reporte_diario;
+CREATE TRIGGER tg_notificacion
+  AFTER INSERT OR UPDATE ON registros_reporte_diario
   FOR EACH ROW
   EXECUTE FUNCTION crear_notificacion();

@@ -4,39 +4,22 @@
 -- Contratista: SERVIALCO S.A.S.
 -- Interventoría: IDU
 --
---   CORRECCIONES v4
+--   CORRECCIONES v5
 --   ─────────────────────────────────────────────
---   [1] contratos.contratista     : 'SERVIALCO S.A.S.' + ON CONFLICT DO UPDATE
---   [2] perfiles.rol CHECK        : agrega 'residente' y 'coordinador'
---   [3] tramos_aux_infra INSERT   : 3 códigos base (EP/CI/MV) con DO UPDATE
---   [4] presupuesto_aux_actividad : INSERT inicial con valores comunes
---   [5] registros_cantidades      : columna fecha_fin agregada
---   [6] NORMALIZACIÓN COMPLETA    : todos los nombres de columna en minúsculas
---                                   sin comillas dobles — elimina el error
---                                   42703 "column Folio does not exist"
---   [7] FKs eliminadas en forms   : resultado del análisis completo de riesgo:
---       SIN FK (datos de campo libre, pueden no coincidir con catálogos):
---         registros_cantidades/componentes: id_tramo, tipo_actividad,
---                                           codigo_elemento, tipo_infra
---         rf_*.id_unico: FK opcional (SET NULL) — puede haber registros RF
---                        cuyo formulario padre fue omitido por falta de folio
---       CON FK (el sync garantiza consistencia):
---         tramos_bd.infraestructura → tramos_aux_infra(codigo)
---         presupuesto_bd.tipo_actividad → presupuesto_aux_actividad
---         bd_*.folio → registros_reporte_diario.folio
---         registros_*.contrato_id → contratos(id)
+--   [BUG-001] historial_estados.registro_id : eliminada FK a registros_cantidades(id)
+--             → ahora es UUID sin FK + columna tabla_origen TEXT para saber
+--               de qué formulario proviene el registro (cantidades/componentes/
+--               reporte_diario). Sin este cambio, los triggers de log_cambio_estado
+--               fallan con violación de FK cuando se disparan sobre
+--               registros_componentes o registros_reporte_diario.
 --
---   RELACIONES QGis (SIG_IDU-1556-2025_cloud.qgs)
---   • bd_personal_obra.folio       → registros_reporte_diario.folio
---   • bd_condicion_climatica.folio → registros_reporte_diario.folio
---   • bd_maquinaria_obra.folio     → registros_reporte_diario.folio
---   • bd_sst_ambiental.folio       → registros_reporte_diario.folio
---   • rf_cantidades.id_unico       → registros_cantidades.id_unico
---   • rf_componentes.id_unico      → registros_componentes.id_unico
---   • rf_reporte_diario.id_unico   → registros_reporte_diario.id_unico
---   • tramos_bd.infraestructura        → tramos_aux_infra(codigo)
---   NOTA: codigo_elemento y tipo_infra en registros_cantidades/componentes
---         son TEXT libres — los valores del campo no coinciden con los catálogos
+--   [BUG-002] notificaciones.registro_id : misma corrección que [BUG-001].
+--             La función crear_notificacion se dispara sobre las 3 tablas de
+--             registros; sin eliminar la FK el INSERT falla en 2 de las 3.
+--
+--   NOTA: Los módulos 002 (RLS), 003 (Triggers) y 004 (Índices) también
+--         fueron corregidos para operar sobre las 3 tablas reales en lugar
+--         de la tabla 'registros' que no existe en el DDL.
 -- ============================================================
 
 
@@ -96,7 +79,6 @@ CREATE TABLE IF NOT EXISTS localidades (
 );
 
 -- 2.2 Catálogo de tipos de infraestructura
---     PK: codigo (EP/CI/MV)  ←  tramos_bd.infraestructura referencia este campo
 CREATE TABLE IF NOT EXISTS tramos_aux_infra (
   codigo TEXT PRIMARY KEY,
   nombre TEXT NOT NULL
@@ -133,7 +115,6 @@ CREATE TABLE IF NOT EXISTS tramos_bd (
 -- 3. TABLAS DE PRESUPUESTO
 -- ════════════════════════════════════════════════════════════
 
--- 3.1 Catálogo de tipos de actividad
 CREATE TABLE IF NOT EXISTS presupuesto_aux_actividad (
   tipo_actividad TEXT PRIMARY KEY
 );
@@ -145,7 +126,6 @@ INSERT INTO presupuesto_aux_actividad (tipo_actividad) VALUES
   ('MEJORAMIENTO')
 ON CONFLICT (tipo_actividad) DO NOTHING;
 
--- 3.2 Catálogo de capítulos
 CREATE TABLE IF NOT EXISTS presupuesto_aux_capitulos (
   id             SERIAL PRIMARY KEY,
   tipo_actividad TEXT REFERENCES presupuesto_aux_actividad(tipo_actividad),
@@ -154,7 +134,6 @@ CREATE TABLE IF NOT EXISTS presupuesto_aux_capitulos (
   UNIQUE (tipo_actividad, capitulo_num)
 );
 
--- 3.3 Presupuesto de obras
 CREATE TABLE IF NOT EXISTS presupuesto_bd (
   id             SERIAL PRIMARY KEY,
   tipo_actividad TEXT REFERENCES presupuesto_aux_actividad(tipo_actividad),
@@ -167,7 +146,6 @@ CREATE TABLE IF NOT EXISTS presupuesto_bd (
   cantidad_ppto  NUMERIC(16,4)
 );
 
--- 3.4 Presupuesto de componentes
 CREATE TABLE IF NOT EXISTS presupuesto_componentes_bd (
   id              SERIAL PRIMARY KEY,
   capitulo_num    TEXT,
@@ -182,7 +160,6 @@ CREATE TABLE IF NOT EXISTS presupuesto_componentes_bd (
   item_pago       TEXT
 );
 
--- 3.5 Auxiliar de componentes
 CREATE TABLE IF NOT EXISTS presupuesto_componentes_aux (
   id             SERIAL PRIMARY KEY,
   codigo_idu     TEXT,
@@ -206,21 +183,18 @@ CREATE TABLE IF NOT EXISTS registros_cantidades (
   creado_por                 UUID REFERENCES perfiles(id),
   usuario_qfield             TEXT,
 
-  -- Localización y elemento
-  id_tramo                   TEXT,  -- sin FK: valor del formulario QField, puede no estar en tramos_bd
+  id_tramo                   TEXT,
   tramo_descripcion          TEXT,
   civ                        TEXT,
-  codigo_elemento            TEXT,  -- sin FK: identificador de elemento físico en vía
-  tipo_infra                 TEXT,  -- sin FK: valor libre del formulario QField
+  codigo_elemento            TEXT,
+  tipo_infra                 TEXT,
   latitud                    DOUBLE PRECISION,
   longitud                   DOUBLE PRECISION,
 
-  -- Periodo de ejecución
   fecha_inicio               DATE,
   fecha_fin                  DATE,
 
-  -- Clasificación de actividad
-  tipo_actividad             TEXT,  -- sin FK: texto libre del formulario, no normalizado contra catálogo
+  tipo_actividad             TEXT,
   capitulo_num               TEXT,
   capitulo                   TEXT,
   item_pago                  TEXT,
@@ -229,7 +203,6 @@ CREATE TABLE IF NOT EXISTS registros_cantidades (
   cantidad                   NUMERIC(12,3),
   descripcion                TEXT,
 
-  -- Evidencia fotográfica
   foto_1_path                TEXT,
   foto_1_url                 TEXT,
   foto_2_path                TEXT,
@@ -244,31 +217,26 @@ CREATE TABLE IF NOT EXISTS registros_cantidades (
   documento_adj_url          TEXT,
   observaciones              TEXT,
 
-  -- Interventoría
   codigointerventor          TEXT,
   acompañamientointerventor  TEXT,
 
-  -- Flujo de aprobación
   estado                     TEXT NOT NULL DEFAULT 'BORRADOR' CHECK (estado IN (
                                'BORRADOR','DEVUELTO','REVISADO','APROBADO'
                              )),
   estado_general             TEXT,
 
-  -- Nivel 1: Residente
   cant_residente             NUMERIC(12,3),
   estado_residente           TEXT CHECK (estado_residente IN ('aprobado','devuelto')),
   aprobado_residente         UUID REFERENCES perfiles(id),
   fecha_residente            TIMESTAMPTZ,
   obs_residente              TEXT,
 
-  -- Nivel 2: Interventor
   cant_interventor           NUMERIC(12,3),
   estado_interventor         TEXT CHECK (estado_interventor IN ('aprobado','devuelto')),
   aprobado_interventor       UUID REFERENCES perfiles(id),
   fecha_interventor          TIMESTAMPTZ,
   obs_interventor            TEXT,
 
-  -- Trazabilidad técnica
   ip_creacion                TEXT,
   ip_residente               TEXT,
   ip_interventor             TEXT,
@@ -286,22 +254,19 @@ CREATE TABLE IF NOT EXISTS registros_componentes (
   creado_por                 UUID REFERENCES perfiles(id),
   usuario_qfield             TEXT,
 
-  -- Localización y elemento
-  id_tramo                   TEXT,  -- sin FK: valor del formulario QField
+  id_tramo                   TEXT,
   tramo                      TEXT,
   civ                        TEXT,
-  codigo_elemento            TEXT,  -- sin FK: identificador de elemento físico en vía
-  tipo_infra                 TEXT,  -- sin FK: valor libre del formulario QField
+  codigo_elemento            TEXT,
+  tipo_infra                 TEXT,
   componente                 TEXT,
   latitud                    DOUBLE PRECISION,
   longitud                   DOUBLE PRECISION,
 
-  -- Periodo
   fecha                      DATE,
   fecha_reporte              DATE,
 
-  -- Clasificación de actividad
-  tipo_actividad             TEXT,  -- sin FK: texto libre del formulario
+  tipo_actividad             TEXT,
   capitulo_num               TEXT,
   capitulo                   TEXT,
   item_pago                  TEXT,
@@ -314,27 +279,23 @@ CREATE TABLE IF NOT EXISTS registros_componentes (
   codigointerventor          TEXT,
   acompañamientointerventor  TEXT,
 
-  -- Flujo de aprobación
   estado                     TEXT NOT NULL DEFAULT 'BORRADOR' CHECK (estado IN (
                                'BORRADOR','DEVUELTO','REVISADO','APROBADO'
                              )),
   estado_general             TEXT,
 
-  -- Nivel 1: Residente
   cant_residente             NUMERIC(12,3),
   estado_residente           TEXT CHECK (estado_residente IN ('aprobado','devuelto')),
   aprobado_residente         UUID REFERENCES perfiles(id),
   fecha_residente            TIMESTAMPTZ,
   obs_residente              TEXT,
 
-  -- Nivel 2: Interventor
   cant_interventor           NUMERIC(12,3),
   estado_interventor         TEXT CHECK (estado_interventor IN ('aprobado','devuelto')),
   aprobado_interventor       UUID REFERENCES perfiles(id),
   fecha_interventor          TIMESTAMPTZ,
   obs_interventor            TEXT,
 
-  -- Trazabilidad técnica
   ip_creacion                TEXT,
   ip_residente               TEXT,
   ip_interventor             TEXT,
@@ -352,36 +313,30 @@ CREATE TABLE IF NOT EXISTS registros_reporte_diario (
   creado_por                 UUID REFERENCES perfiles(id),
   usuario_qfield             TEXT,
 
-  -- Localización
   latitud                    DOUBLE PRECISION,
   longitud                   DOUBLE PRECISION,
 
-  -- Periodo
   fecha                      DATE,
   fecha_reporte              DATE,
   observaciones              TEXT,
 
-  -- Flujo de aprobación
   estado                     TEXT NOT NULL DEFAULT 'BORRADOR' CHECK (estado IN (
                                'BORRADOR','DEVUELTO','REVISADO','APROBADO'
                              )),
   estado_general             TEXT,
 
-  -- Nivel 1: Residente
   cant_residente             NUMERIC(12,3),
   estado_residente           TEXT CHECK (estado_residente IN ('aprobado','devuelto')),
   aprobado_residente         UUID REFERENCES perfiles(id),
   fecha_residente            TIMESTAMPTZ,
   obs_residente              TEXT,
 
-  -- Nivel 2: Interventor
   cant_interventor           NUMERIC(12,3),
   estado_interventor         TEXT CHECK (estado_interventor IN ('aprobado','devuelto')),
   aprobado_interventor       UUID REFERENCES perfiles(id),
   fecha_interventor          TIMESTAMPTZ,
   obs_interventor            TEXT,
 
-  -- Trazabilidad técnica
   ip_creacion                TEXT,
   ip_residente               TEXT,
   ip_interventor             TEXT,
@@ -392,10 +347,8 @@ CREATE TABLE IF NOT EXISTS registros_reporte_diario (
 
 -- ════════════════════════════════════════════════════════════
 -- 5. TABLAS SECUNDARIAS DEL REPORTE DIARIO
---    FK: folio → registros_reporte_diario.folio
 -- ════════════════════════════════════════════════════════════
 
--- 5.1 Personal de obra
 CREATE TABLE IF NOT EXISTS bd_personal_obra (
   id                 UUID DEFAULT gen_random_uuid() PRIMARY KEY,
   folio              TEXT NOT NULL REFERENCES registros_reporte_diario(folio) ON DELETE CASCADE,
@@ -407,7 +360,6 @@ CREATE TABLE IF NOT EXISTS bd_personal_obra (
   latitud            DOUBLE PRECISION
 );
 
--- 5.2 Condición climática
 CREATE TABLE IF NOT EXISTS bd_condicion_climatica (
   id            UUID DEFAULT gen_random_uuid() PRIMARY KEY,
   folio         TEXT NOT NULL REFERENCES registros_reporte_diario(folio) ON DELETE CASCADE,
@@ -418,7 +370,6 @@ CREATE TABLE IF NOT EXISTS bd_condicion_climatica (
   latitud       DOUBLE PRECISION
 );
 
--- 5.3 Maquinaria en obra
 CREATE TABLE IF NOT EXISTS bd_maquinaria_obra (
   id                      UUID DEFAULT gen_random_uuid() PRIMARY KEY,
   folio                   TEXT NOT NULL REFERENCES registros_reporte_diario(folio) ON DELETE CASCADE,
@@ -437,7 +388,6 @@ CREATE TABLE IF NOT EXISTS bd_maquinaria_obra (
   latitud                 DOUBLE PRECISION
 );
 
--- 5.4 SST – Ambiental
 CREATE TABLE IF NOT EXISTS bd_sst_ambiental (
   id                UUID DEFAULT gen_random_uuid() PRIMARY KEY,
   folio             TEXT NOT NULL REFERENCES registros_reporte_diario(folio) ON DELETE CASCADE,
@@ -454,33 +404,29 @@ CREATE TABLE IF NOT EXISTS bd_sst_ambiental (
 
 -- ════════════════════════════════════════════════════════════
 -- 6. REGISTROS FOTOGRÁFICOS
---    FK: id_unico → [formulario].id_unico
 -- ════════════════════════════════════════════════════════════
 
--- 6.1 Fotos de cantidades
 CREATE TABLE IF NOT EXISTS rf_cantidades (
-  id               UUID DEFAULT gen_random_uuid() PRIMARY KEY,
-  folio            TEXT,
-  id_unico         TEXT REFERENCES registros_cantidades(id_unico) ON DELETE SET NULL,  -- opcional: el registro padre puede no existir aún
-  observacion      TEXT,
-  nombre_foto      TEXT,
+  id                UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  folio             TEXT,
+  id_unico          TEXT REFERENCES registros_cantidades(id_unico) ON DELETE SET NULL,
+  observacion       TEXT,
+  nombre_foto       TEXT,
   ruta_destino_foto TEXT
 );
 
--- 6.2 Fotos de componentes
 CREATE TABLE IF NOT EXISTS rf_componentes (
   id            UUID DEFAULT gen_random_uuid() PRIMARY KEY,
   folio         TEXT,
-  id_unico      TEXT REFERENCES registros_componentes(id_unico) ON DELETE SET NULL,  -- opcional
+  id_unico      TEXT REFERENCES registros_componentes(id_unico) ON DELETE SET NULL,
   observaciones TEXT,
   foto          TEXT
 );
 
--- 6.3 Fotos de reporte diario
 CREATE TABLE IF NOT EXISTS rf_reporte_diario (
   id            UUID DEFAULT gen_random_uuid() PRIMARY KEY,
   folio         TEXT,
-  id_unico      TEXT REFERENCES registros_reporte_diario(id_unico) ON DELETE SET NULL,  -- opcional
+  id_unico      TEXT REFERENCES registros_reporte_diario(id_unico) ON DELETE SET NULL,
   observaciones TEXT,
   foto          TEXT
 );
@@ -507,11 +453,26 @@ CREATE TABLE IF NOT EXISTS formulario_pmt (
 
 -- ════════════════════════════════════════════════════════════
 -- 8. AUDITORÍA Y FLUJO
+--
+-- [BUG-001 CORREGIDO] historial_estados.registro_id:
+--   Eliminada FK a registros_cantidades(id).
+--   Ahora es UUID sin FK + columna tabla_origen TEXT.
+--   Esto permite que el trigger log_cambio_estado funcione
+--   correctamente en las 3 tablas de registros.
+--
+-- [BUG-002 CORREGIDO] notificaciones.registro_id:
+--   Misma corrección que historial_estados.
 -- ════════════════════════════════════════════════════════════
 
 CREATE TABLE IF NOT EXISTS historial_estados (
   id              UUID DEFAULT gen_random_uuid() PRIMARY KEY,
-  registro_id     UUID REFERENCES registros_cantidades(id),
+  registro_id     UUID,                     -- sin FK: puede venir de cualquiera de las 3 tablas
+  tabla_origen    TEXT DEFAULT 'registros_cantidades'
+                  CHECK (tabla_origen IN (
+                    'registros_cantidades',
+                    'registros_componentes',
+                    'registros_reporte_diario'
+                  )),
   estado_anterior TEXT,
   estado_nuevo    TEXT,
   cambiado_por    UUID REFERENCES perfiles(id),
@@ -519,6 +480,19 @@ CREATE TABLE IF NOT EXISTS historial_estados (
   observacion     TEXT,
   ip              TEXT
 );
+
+-- Si la tabla ya existe, agregar columna tabla_origen y eliminar FK:
+ALTER TABLE historial_estados
+  DROP CONSTRAINT IF EXISTS historial_estados_registro_id_fkey;
+
+ALTER TABLE historial_estados
+  ADD COLUMN IF NOT EXISTS tabla_origen TEXT DEFAULT 'registros_cantidades'
+  CHECK (tabla_origen IN (
+    'registros_cantidades',
+    'registros_componentes',
+    'registros_reporte_diario'
+  ));
+
 
 CREATE TABLE IF NOT EXISTS cierres_semanales (
   id                   UUID DEFAULT gen_random_uuid() PRIMARY KEY,
@@ -546,7 +520,13 @@ CREATE TABLE IF NOT EXISTS cierre_registros (
 
 CREATE TABLE IF NOT EXISTS notificaciones (
   id           UUID DEFAULT gen_random_uuid() PRIMARY KEY,
-  registro_id  UUID REFERENCES registros_cantidades(id),
+  registro_id  UUID,                         -- sin FK: puede venir de cualquiera de las 3 tablas
+  tabla_origen TEXT DEFAULT 'registros_cantidades'
+               CHECK (tabla_origen IN (
+                 'registros_cantidades',
+                 'registros_componentes',
+                 'registros_reporte_diario'
+               )),
   destinatario UUID REFERENCES perfiles(id),
   tipo         TEXT,
   asunto       TEXT,
@@ -555,3 +535,15 @@ CREATE TABLE IF NOT EXISTS notificaciones (
   enviado_en   TIMESTAMPTZ,
   creado_en    TIMESTAMPTZ DEFAULT NOW()
 );
+
+-- Si la tabla ya existe, aplicar las mismas correcciones:
+ALTER TABLE notificaciones
+  DROP CONSTRAINT IF EXISTS notificaciones_registro_id_fkey;
+
+ALTER TABLE notificaciones
+  ADD COLUMN IF NOT EXISTS tabla_origen TEXT DEFAULT 'registros_cantidades'
+  CHECK (tabla_origen IN (
+    'registros_cantidades',
+    'registros_componentes',
+    'registros_reporte_diario'
+  ));
