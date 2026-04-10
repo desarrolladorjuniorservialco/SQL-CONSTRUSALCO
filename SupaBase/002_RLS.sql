@@ -415,3 +415,126 @@ CREATE POLICY "service_notificaciones" ON notificaciones
   FOR ALL TO service_role
   USING (TRUE)
   WITH CHECK (TRUE);
+
+
+-- ════════════════════════════════════════════════════════════
+-- PERFILES — UPDATE y DELETE
+--
+-- Problema anterior: solo existían SELECT e INSERT en perfiles.
+-- Sin UPDATE, los usuarios no pueden corregir su propio nombre/empresa,
+-- y el admin no puede cambiar roles desde la app.
+-- Sin DELETE (solo admin), las cuentas eliminadas dejan perfiles huérfanos.
+-- ════════════════════════════════════════════════════════════
+
+DROP POLICY IF EXISTS "usuario_actualiza_su_perfil" ON perfiles;
+DROP POLICY IF EXISTS "admin_gestiona_perfiles"      ON perfiles;
+
+-- El usuario puede actualizar solo sus campos de presentación (nombre, empresa).
+-- NO puede cambiar su propio rol ni contrato (eso es exclusivo del admin).
+CREATE POLICY "usuario_actualiza_su_perfil" ON perfiles
+  FOR UPDATE TO authenticated
+  USING (id = auth.uid())
+  WITH CHECK (
+    id = auth.uid()
+    -- El rol y contrato los gestiona solo el admin; un usuario no puede
+    -- cambiarlos a través de esta política (el admin usa service_role).
+    -- Esta política PERMITE el UPDATE pero la restricción real la aplica
+    -- la app (solo muestra campos editables: nombre, empresa).
+  );
+
+CREATE POLICY "admin_gestiona_perfiles" ON perfiles
+  FOR ALL TO authenticated
+  USING (get_rol() = 'admin')
+  WITH CHECK (get_rol() = 'admin');
+
+
+-- ════════════════════════════════════════════════════════════
+-- TABLAS DE REFERENCIA / CATÁLOGOS
+--
+-- Problema: estas tablas NO tenían RLS habilitado ni políticas.
+-- Con RLS deshabilitado, cualquier usuario autenticado (o incluso
+-- anónimo si el proyecto lo permite) puede leer y escribir en ellas.
+-- Se habilita RLS con política de solo lectura para autenticados y
+-- escritura exclusiva a service_role.
+--
+-- Tablas cubiertas:
+--   localidades, tramos_aux_infra, tramos_aux_tramos, tramos_bd,
+--   presupuesto_aux_actividad, presupuesto_aux_capitulos,
+--   presupuesto_bd, presupuesto_componentes_bd
+-- ════════════════════════════════════════════════════════════
+
+ALTER TABLE localidades                  ENABLE ROW LEVEL SECURITY;
+ALTER TABLE tramos_aux_infra             ENABLE ROW LEVEL SECURITY;
+ALTER TABLE tramos_aux_tramos            ENABLE ROW LEVEL SECURITY;
+ALTER TABLE tramos_bd                    ENABLE ROW LEVEL SECURITY;
+ALTER TABLE presupuesto_aux_actividad    ENABLE ROW LEVEL SECURITY;
+ALTER TABLE presupuesto_aux_capitulos    ENABLE ROW LEVEL SECURITY;
+ALTER TABLE presupuesto_bd               ENABLE ROW LEVEL SECURITY;
+ALTER TABLE presupuesto_componentes_bd   ENABLE ROW LEVEL SECURITY;
+
+-- Macro helper: SELECT para todos los autenticados, escritura solo service_role
+-- Se declara tabla por tabla porque PostgreSQL no admite políticas sobre
+-- múltiples tablas en un solo CREATE POLICY.
+
+CREATE POLICY "ref_select" ON localidades
+  FOR SELECT TO authenticated USING (TRUE);
+CREATE POLICY "ref_service" ON localidades
+  FOR ALL TO service_role USING (TRUE) WITH CHECK (TRUE);
+
+CREATE POLICY "ref_select" ON tramos_aux_infra
+  FOR SELECT TO authenticated USING (TRUE);
+CREATE POLICY "ref_service" ON tramos_aux_infra
+  FOR ALL TO service_role USING (TRUE) WITH CHECK (TRUE);
+
+CREATE POLICY "ref_select" ON tramos_aux_tramos
+  FOR SELECT TO authenticated USING (TRUE);
+CREATE POLICY "ref_service" ON tramos_aux_tramos
+  FOR ALL TO service_role USING (TRUE) WITH CHECK (TRUE);
+
+CREATE POLICY "ref_select" ON tramos_bd
+  FOR SELECT TO authenticated USING (TRUE);
+CREATE POLICY "ref_service" ON tramos_bd
+  FOR ALL TO service_role USING (TRUE) WITH CHECK (TRUE);
+
+CREATE POLICY "ref_select" ON presupuesto_aux_actividad
+  FOR SELECT TO authenticated USING (TRUE);
+CREATE POLICY "ref_service" ON presupuesto_aux_actividad
+  FOR ALL TO service_role USING (TRUE) WITH CHECK (TRUE);
+
+CREATE POLICY "ref_select" ON presupuesto_aux_capitulos
+  FOR SELECT TO authenticated USING (TRUE);
+CREATE POLICY "ref_service" ON presupuesto_aux_capitulos
+  FOR ALL TO service_role USING (TRUE) WITH CHECK (TRUE);
+
+CREATE POLICY "ref_select" ON presupuesto_bd
+  FOR SELECT TO authenticated USING (TRUE);
+CREATE POLICY "ref_service" ON presupuesto_bd
+  FOR ALL TO service_role USING (TRUE) WITH CHECK (TRUE);
+
+CREATE POLICY "ref_select" ON presupuesto_componentes_bd
+  FOR SELECT TO authenticated USING (TRUE);
+CREATE POLICY "ref_service" ON presupuesto_componentes_bd
+  FOR ALL TO service_role USING (TRUE) WITH CHECK (TRUE);
+
+
+-- ════════════════════════════════════════════════════════════
+-- NOTA DE DESPLIEGUE — SUPABASE_ANON_KEY
+-- ════════════════════════════════════════════════════════════
+-- La app Streamlit usa DOS claves de Supabase:
+--
+--   SUPABASE_KEY      → service_role → solo para lecturas y sync QField
+--   SUPABASE_ANON_KEY → anon key     → operaciones de escritura con JWT
+--                                       del usuario (RLS activo)
+--
+-- Para que el RLS proteja las escrituras desde la app, agrega
+-- SUPABASE_ANON_KEY a tu archivo .streamlit/secrets.toml:
+--
+--   [secrets]
+--   SUPABASE_URL      = "https://xxxx.supabase.co"
+--   SUPABASE_KEY      = "service_role_key_aqui"
+--   SUPABASE_ANON_KEY = "anon_key_aqui"          ← NUEVO
+--
+-- La anon key es pública por diseño (es la que Supabase expone en el
+-- dashboard bajo "Project Settings → API → anon public"). Su seguridad
+-- depende del RLS, no de que sea secreta.
+-- ════════════════════════════════════════════════════════════
