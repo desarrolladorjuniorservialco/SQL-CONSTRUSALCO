@@ -1,0 +1,230 @@
+-- ============================================================
+-- SISTEMA BDO · IDU-1556-2025
+-- Consorcio Obras Peatonales 2025 · SERVIALCO S.A.S.
+-- ============================================================
+--
+-- RESUMEN
+-- ───────
+-- Base de datos operativa del contrato IDU-1556-2025.
+-- Registra el avance de obra en campo (vía QField) y lo
+-- centraliza en Supabase para consulta, aprobación y
+-- generación de informes.
+--
+-- ┌──────────────────────────────────────────────────────────┐
+-- │  FLUJO GENERAL                                           │
+-- │                                                          │
+-- │  Inspector/Residente                                     │
+-- │       │  (captura en campo)                             │
+-- │       ▼                                                  │
+-- │  QField (Android/iOS)                                    │
+-- │       │  (GeoPackages *.gpkg)                           │
+-- │       ▼                                                  │
+-- │  QFieldCloud (nube QField)                               │
+-- │       │  (API REST + archivos)                          │
+-- │       ▼                                                  │
+-- │  GitHub Actions  ←── cron: cada 20 min (lun–sáb)        │
+-- │  sync_qfield.py                                          │
+-- │       │  (descarga GPKGs, lee capas, sube fotos)        │
+-- │       ▼                                                  │
+-- │  Supabase (PostgreSQL)  ←── este repositorio            │
+-- │       │                                                  │
+-- │       ├─▶  Streamlit (dashboards / aprobación)          │
+-- │       └─▶  QGIS SIG_IDU-1556-2025_cloud.qgs             │
+-- └──────────────────────────────────────────────────────────┘
+--
+-- ============================================================
+-- REPOSITORIOS
+-- ============================================================
+--
+--  ┌─ SupaBaseSQLEditor  (este repo)
+--  │    Esquema SQL completo: tablas, RLS, triggers, índices.
+--  │    Se ejecuta en el SQL Editor de Supabase o via psql.
+--  │    Archivos:
+--  │      000_DROP_ALL.sql          Limpia el esquema completo
+--  │      001_TABLAS.sql            DDL de todas las tablas
+--  │      002_RLS.sql               Seguridad a nivel de fila
+--  │      003_FUNCIONES_TRIGGERS.sql Lógica de negocio en BD
+--  │      004_INDICES.sql           Índices de rendimiento
+--  │      005_USUARIOS.sql          Creación de usuarios demo
+--  │
+--  └─ BDO-IDU-1556-2025  (repo de sincronización)
+--       Scripts Python que conectan QFieldCloud con Supabase.
+--       Se ejecutan manualmente o vía GitHub Actions.
+--       Carpetas:
+--         sync/                     Módulos Python de sync
+--         migrations/               Parches SQL incrementales
+--         .github/workflows/        Workflow de automatización
+--
+-- ============================================================
+-- MÓDULOS SQL (este repo)
+-- ============================================================
+--
+-- 001_TABLAS.sql
+-- ──────────────
+--   Define todas las tablas del dominio en snake_case.
+--   Orden de creación respeta las dependencias FK:
+--
+--   perfiles, contratos
+--     └─▶ localidades
+--     └─▶ tramos_aux_infra, tramos_aux_tramos, tramos_bd
+--     └─▶ presupuesto_aux_actividad
+--         └─▶ presupuesto_aux_capitulos
+--         └─▶ presupuesto_bd
+--     └─▶ presupuesto_componentes_bd, presupuesto_componentes_aux
+--     └─▶ registros_cantidades          ← formulario principal
+--     └─▶ registros_componentes         ← formulario principal
+--     └─▶ registros_reporte_diario      ← formulario principal
+--         └─▶ bd_personal_obra
+--         └─▶ bd_condicion_climatica
+--         └─▶ bd_maquinaria_obra
+--         └─▶ bd_sst_ambiental
+--     └─▶ rf_cantidades                 ← fotos (sin FK por diseño)
+--     └─▶ rf_componentes                ← fotos (sin FK por diseño)
+--     └─▶ rf_reporte_diario             ← fotos (sin FK por diseño)
+--     └─▶ formulario_pmt
+--     └─▶ historial_estados             ← auditoría (sin FK por diseño)
+--     └─▶ cierres_semanales
+--         └─▶ cierre_registros
+--     └─▶ notificaciones                ← genérico (sin FK por diseño)
+--
+-- 002_RLS.sql
+-- ───────────
+--   Row Level Security: cada perfil solo puede leer/escribir
+--   según su rol (residente, coordinador, interventor, admin…).
+--   Usa la función helper get_rol() para evaluar el rol del
+--   usuario autenticado.
+--
+-- 003_FUNCIONES_TRIGGERS.sql
+-- ──────────────────────────
+--   Lógica de negocio ejecutada automáticamente en la BD:
+--   · log_cambio_estado   → registra en historial_estados cada
+--                           vez que cambia el campo 'estado'.
+--   · crear_notificacion  → genera notificaciones pendientes al
+--                           aprobar o devolver un formulario.
+--   Se disparan sobre registros_cantidades, registros_componentes
+--   y registros_reporte_diario.
+--
+-- 004_INDICES.sql
+-- ───────────────
+--   Índices sobre columnas de consulta frecuente:
+--   folio, estado, fecha_creacion, contrato_id, id_tramo.
+--
+-- 005_USUARIOS.sql
+-- ────────────────
+--   Script utilitario para crear usuarios demo en auth.users
+--   y sus perfiles asociados. Solo para entornos de desarrollo.
+--
+-- ============================================================
+-- MÓDULOS PYTHON DE SINCRONIZACIÓN (BDO-IDU-1556-2025/sync/)
+-- ============================================================
+--
+--   sync_qfield.py        Orquestador: ejecuta todos los módulos
+--                         en el orden correcto.
+--   config.py             Variables de entorno (SUPABASE_URL,
+--                         QFIELD_USER, QFIELD_PASSWORD…).
+--   connections.py        Login QFieldCloud + cliente Supabase.
+--   gpkg.py               Descarga GPKGs y lee capas con geopandas.
+--   photos.py             Descarga fotos de QFieldCloud y las sube
+--                         al bucket 'fotos-obra' en Supabase Storage.
+--                         Devuelve URL pública para uso en Streamlit.
+--   utils.py              safe(), safe_num(), coords_from_geom().
+--   sync_lookup.py        Tablas catálogo: tramos_aux_infra,
+--                         presupuesto_aux_actividad.
+--   sync_geo.py           Referencia geográfica: localidades,
+--                         tramos_bd.
+--   sync_presupuesto.py   Presupuesto: presupuesto_bd,
+--                         presupuesto_componentes_bd.
+--   sync_formularios.py   Formularios principales: cantidades,
+--                         componentes, reporte_diario, PMT.
+--   sync_bd.py            Tablas secundarias del reporte diario:
+--                         personal, climatica, maquinaria, sst.
+--   sync_rf.py            Registros fotográficos: rf_cantidades,
+--                         rf_componentes, rf_reporte_diario.
+--                         Descarga y sube fotos a Storage.
+--
+--   Orden de ejecución en sync_qfield.py:
+--     0. Tablas lookup       (tramos_aux_infra, ppto_actividad)
+--     1. Referencia geo      (localidades, tramos_bd)
+--     2. Presupuesto         (presupuesto_bd, componentes_bd)
+--     3. Formularios princ.  (cantidades, componentes, reporte, pmt)
+--     4. Tablas secundarias  (personal, climatica, maquinaria, sst)
+--     5. Fotos               (rf_cantidades, rf_componentes, rf_reporte)
+--
+--   El orden no es arbitrario: las tablas secundarias (paso 4)
+--   tienen FK a registros_reporte_diario.folio, que debe existir
+--   antes de insertar. Las fotos (paso 5) se procesan al final
+--   porque la subida a Storage es la operación más lenta.
+--
+-- ============================================================
+-- DECISIONES DE DISEÑO RELEVANTES
+-- ============================================================
+--
+--  · folio vs id_unico
+--    folio     = identificador de formulario (un inspector puede
+--                generar varios ítems en el mismo formulario).
+--    id_unico  = identificador de fila dentro del GPKG.
+--    registros_cantidades tiene múltiples filas con el mismo folio
+--    (una por ítem de pago). El sync hace upsert por id_unico,
+--    no por folio.
+--
+--  · FK deliberadamente ausentes en columnas de sync
+--    id_tramo, codigo_elemento, tipo_infra y tipo_actividad en
+--    registros_* son TEXT sin REFERENCES. Motivo: el sync puede
+--    insertar formularios antes de que las tablas de referencia
+--    estén completamente sincronizadas, lo que causaría error 23503.
+--    La integridad se garantiza por el orden de sync, no por FK.
+--
+--  · rf_* sin FK en id_unico
+--    id_unico en rf_cantidades/componentes/reporte_diario es el
+--    identificador propio de la foto, no una referencia al
+--    formulario padre. La relación foto↔formulario se navega
+--    por folio. Agregar FK causaba error 23503 en producción.
+--
+--  · historial_estados y notificaciones sin FK en registro_id
+--    Estas tablas registran eventos de las tres tablas de
+--    formularios. Una FK a una sola tabla haría imposible auditar
+--    las otras dos. Se usa tabla_origen TEXT con CHECK para
+--    identificar la tabla de procedencia.
+--
+--  · foto_url en rf_*
+--    Cada foto se sube al bucket 'fotos-obra' de Supabase Storage
+--    durante el sync. La URL pública queda en foto_url y puede
+--    usarse directamente en Streamlit con st.image(url).
+--
+-- ============================================================
+-- INICIALIZACIÓN DEL ESQUEMA
+-- ============================================================
+--
+--   Para crear el esquema desde cero (entorno nuevo o reset):
+--
+--     1. Ejecutar 000_DROP_ALL.sql   (elimina todas las tablas)
+--     2. Ejecutar 001_TABLAS.sql     (crea tablas + seed data)
+--     3. Ejecutar 002_RLS.sql        (políticas de seguridad)
+--     4. Ejecutar 003_FUNCIONES_TRIGGERS.sql
+--     5. Ejecutar 004_INDICES.sql
+--     6. Ejecutar 005_USUARIOS.sql   (solo en desarrollo)
+--
+--   El script 000_DROP_ALL.sql elimina en orden inverso de FK
+--   para que CASCADE no genere conflictos.
+--
+-- ============================================================
+-- EJECUCIÓN LOCAL DEL SYNC (pruebas)
+-- ============================================================
+--
+--   Requisitos:
+--     pip install supabase geopandas requests python-dotenv
+--
+--   Crear archivo sync/.env con:
+--     SUPABASE_URL=https://<proyecto>.supabase.co
+--     SUPABASE_KEY=<service_role_key>
+--     QFIELD_USER=<usuario_qfieldcloud>
+--     QFIELD_PASSWORD=<contraseña>
+--
+--   Ejecutar desde la raíz del repo BDO-IDU-1556-2025:
+--     python -m sync.sync_qfield
+--
+--   En producción se ejecuta automáticamente vía GitHub Actions
+--   (.github/workflows/sync.yml) cada 20 minutos de lunes a
+--   sábado entre las 11:00 y las 23:00 (hora Colombia, UTC-5).
+--
+-- ============================================================
