@@ -1,6 +1,9 @@
 -- ============================================================
 -- SISTEMA BDO · IDU-1556-2025
--- Consorcio Obras Peatonales 2025 · SERVIALCO S.A.S.
+-- Consorcio Obras Peatonales 2025
+-- Contratista  : URBACON SAS
+-- Interventoría: CONSORCIO INTERCONSERVACION
+-- Supervisión  : IDU
 -- ============================================================
 --
 -- RESUMEN
@@ -17,14 +20,14 @@
 -- │       │  (captura en campo)                             │
 -- │       ▼                                                  │
 -- │  QField (Android/iOS)                                    │
--- │       │  (GeoPackages *.gpkg)                           │
+-- │       │  (GeoPackages *.gpkg + Excel contrato)          │
 -- │       ▼                                                  │
 -- │  QFieldCloud (nube QField)                               │
 -- │       │  (API REST + archivos)                          │
 -- │       ▼                                                  │
 -- │  GitHub Actions  ←── cron: cada 20 min (lun–sáb)        │
 -- │  sync_qfield.py                                          │
--- │       │  (descarga GPKGs, lee capas, sube fotos)        │
+-- │       │  (descarga GPKGs + Excel, lee capas, sube fotos)│
 -- │       ▼                                                  │
 -- │  Supabase (PostgreSQL)  ←── este repositorio            │
 -- │       │                                                  │
@@ -40,20 +43,20 @@
 --  │    Esquema SQL completo: tablas, RLS, triggers, índices.
 --  │    Se ejecuta en el SQL Editor de Supabase o via psql.
 --  │    Archivos:
---  │      000_DROP_ALL.sql          Limpia el esquema completo
---  │      001_TABLAS.sql            DDL de todas las tablas
---  │      002_RLS.sql               Seguridad a nivel de fila
+--  │      000_DROP_ALL.sql           Limpia tablas Y funciones
+--  │      001_TABLAS.sql             DDL de todas las tablas
+--  │      002_RLS.sql                Seguridad a nivel de fila
 --  │      003_FUNCIONES_TRIGGERS.sql Lógica de negocio en BD
---  │      004_INDICES.sql           Índices de rendimiento
---  │      005_USUARIOS.sql          Creación de usuarios demo
+--  │      004_INDICES.sql            Índices de rendimiento
+--  │      005_USUARIOS.sql           Creación de usuarios demo
 --  │
 --  └─ BDO-IDU-1556-2025  (repo de sincronización)
 --       Scripts Python que conectan QFieldCloud con Supabase.
 --       Se ejecutan manualmente o vía GitHub Actions.
 --       Carpetas:
---         sync/                     Módulos Python de sync
---         migrations/               Parches SQL incrementales
---         .github/workflows/        Workflow de automatización
+--         sync/                      Módulos Python de sync
+--         migrations/                Parches SQL incrementales
+--         .github/workflows/         Workflow de automatización
 --
 -- ============================================================
 -- MÓDULOS SQL (este repo)
@@ -64,13 +67,19 @@
 --   Define todas las tablas del dominio en snake_case.
 --   Orden de creación respeta las dependencias FK:
 --
---   perfiles, contratos
+--   perfiles
+--   contratos
+--     └─▶ contratos_prorrogas        ← seguimiento de prórrogas
+--     └─▶ contratos_adiciones        ← seguimiento de adiciones
 --     └─▶ localidades
---     └─▶ tramos_aux_infra, tramos_aux_tramos, tramos_bd
+--     └─▶ tramos_aux_infra
+--     └─▶ tramos_aux_tramos
+--     └─▶ tramos_bd
 --     └─▶ presupuesto_aux_actividad
 --         └─▶ presupuesto_aux_capitulos
 --         └─▶ presupuesto_bd
---     └─▶ presupuesto_componentes_bd, presupuesto_componentes_aux
+--     └─▶ presupuesto_componentes_bd
+--     └─▶ presupuesto_componentes_aux
 --     └─▶ registros_cantidades          ← formulario principal
 --     └─▶ registros_componentes         ← formulario principal
 --     └─▶ registros_reporte_diario      ← formulario principal
@@ -87,73 +96,177 @@
 --         └─▶ cierre_registros
 --     └─▶ notificaciones                ← genérico (sin FK por diseño)
 --
+--   001_TABLAS.sql también incluye:
+--   · Seed data de contratos_aux_infra (EP, CI, MV)
+--   · presupuesto_aux_actividad (MANTENIMIENTO, REHABILITACION…)
+--   · INSERT del contrato IDU-1556-2025 con datos del Excel BD_CTO_INI
+--   · Bloques DO idempotentes de migración (PATCH-001/002)
+--   · Triggers de sincronización contractual (sección 10):
+--       trg_sync_prorrogas → actualiza contratos.prorrogas y
+--                            contratos.plazo_actual
+--       trg_sync_adiciones → actualiza contratos.adiciones y
+--                            contratos.valor_actual
+--
 -- 002_RLS.sql
 -- ───────────
---   Row Level Security: cada perfil solo puede leer/escribir
---   según su rol (residente, coordinador, interventor, admin…).
+--   Row Level Security habilitado en TODAS las tablas.
+--   Cada perfil solo puede leer/escribir según su rol.
 --   Usa la función helper get_rol() para evaluar el rol del
 --   usuario autenticado.
+--
+--   Tablas con RLS y sus políticas:
+--     perfiles               → cada usuario ve su propio perfil;
+--                              admin gestiona todos
+--     contratos              → lectura: todos; escritura: admin/service
+--     contratos_prorrogas    → lectura: todos; escritura: admin/service
+--     contratos_adiciones    → lectura: todos; escritura: admin/service
+--     registros_cantidades   → inspector crea/edita sus borradores;
+--                              residente aprueba (nivel 1);
+--                              interventor aprueba (nivel 2);
+--                              admin acceso total
+--     registros_componentes  → misma lógica que registros_cantidades
+--     registros_reporte_diario → misma lógica
+--     formulario_pmt         → inspector crea; roles superiores leen
+--     historial_estados      → rol ≥ residente lee; roles escriben
+--     cierres_semanales      → rol ≥ residente lee; interventor/admin crea
+--     notificaciones         → cada usuario ve las propias
+--     localidades            → solo lectura (service_role escribe)
+--     tramos_aux_infra       → solo lectura (service_role escribe)
+--     tramos_aux_tramos      → solo lectura (service_role escribe)
+--     tramos_bd              → solo lectura (service_role escribe)
+--     presupuesto_aux_*      → solo lectura (service_role escribe)
+--     presupuesto_bd         → solo lectura (service_role escribe)
+--     presupuesto_componentes_bd  → solo lectura (service_role escribe)
+--     presupuesto_componentes_aux → solo lectura (service_role escribe)
+--     rf_cantidades          → lectura todos; escritura service_role
+--     rf_componentes         → lectura todos; escritura service_role
+--     rf_reporte_diario      → lectura todos; escritura service_role
+--     bd_personal_obra       → lectura todos; escritura service_role
+--     bd_condicion_climatica → lectura todos; escritura service_role
+--     bd_maquinaria_obra     → lectura todos; escritura service_role
+--     bd_sst_ambiental       → lectura todos; escritura service_role
 --
 -- 003_FUNCIONES_TRIGGERS.sql
 -- ──────────────────────────
 --   Lógica de negocio ejecutada automáticamente en la BD:
---   · log_cambio_estado   → registra en historial_estados cada
---                           vez que cambia el campo 'estado'.
---   · crear_notificacion  → genera notificaciones pendientes al
---                           aprobar o devolver un formulario.
---   Se disparan sobre registros_cantidades, registros_componentes
---   y registros_reporte_diario.
+--
+--   · marcar_inmutable()    → BEFORE UPDATE: cuando estado → 'APROBADO'
+--                             marca el registro inmutable y estampa
+--                             fecha_interventor. Impide modificaciones
+--                             posteriores.
+--
+--   · log_cambio_estado()   → AFTER UPDATE: registra en historial_estados
+--                             cada cambio de estado con tabla_origen,
+--                             usuario y observación.
+--
+--   · crear_notificacion()  → AFTER INSERT OR UPDATE: genera entradas
+--                             en notificaciones para todos los usuarios
+--                             activos del contrato.
+--
+--   Los tres triggers se instalan sobre las tres tablas de formularios:
+--   registros_cantidades, registros_componentes, registros_reporte_diario.
+--
+--   Nota: los triggers de sincronización contractual
+--   (trg_sync_prorrogas, trg_sync_adiciones) están en 001_TABLAS.sql
+--   junto a la DDL de las tablas que los originan.
 --
 -- 004_INDICES.sql
 -- ───────────────
---   Índices sobre columnas de consulta frecuente:
---   folio, estado, fecha_creacion, contrato_id, id_tramo.
+--   Índices sobre columnas de consulta frecuente.
+--   Tablas cubiertas:
+--     registros_cantidades    (folio, estado, contrato_id,
+--                              contrato+estado, id_tramo, fecha, inspector,
+--                              item_pago)
+--     registros_componentes   (mismas columnas)
+--     registros_reporte_diario (folio, estado, contrato_id,
+--                               contrato+estado, fecha, inspector)
+--     historial_estados       (registro_id, tabla_origen, cambiado_por)
+--     cierres_semanales       (contrato_id, semana)
+--     notificaciones          (destinatario, enviado=FALSE parcial)
+--     contratos_prorrogas     (contrato_id, contrato+numero, fecha_firma)
+--     contratos_adiciones     (contrato_id, contrato+numero, fecha_firma)
+--     formulario_pmt          (folio, contrato_id, vigencia)
+--     bd_personal_obra        (folio)
+--     bd_condicion_climatica  (folio)
+--     bd_maquinaria_obra      (folio)
+--     bd_sst_ambiental        (folio)
+--     rf_cantidades           (folio)
+--     rf_componentes          (folio)
+--     rf_reporte_diario       (folio)
 --
 -- 005_USUARIOS.sql
 -- ────────────────
---   Script utilitario para crear usuarios demo en auth.users
---   y sus perfiles asociados. Solo para entornos de desarrollo.
+--   Script utilitario para crear perfiles de usuario.
+--   PASO 1: crear el usuario en Supabase Auth → copiar UUID.
+--   PASO 2: insertar en perfiles con ese UUID.
+--   Solo para entornos de desarrollo / usuarios iniciales.
 --
 -- ============================================================
 -- MÓDULOS PYTHON DE SINCRONIZACIÓN (BDO-IDU-1556-2025/sync/)
 -- ============================================================
 --
 --   sync_qfield.py        Orquestador: ejecuta todos los módulos
---                         en el orden correcto.
+--                         en el orden correcto de dependencias.
 --   config.py             Variables de entorno (SUPABASE_URL,
 --                         QFIELD_USER, QFIELD_PASSWORD…).
 --   connections.py        Login QFieldCloud + cliente Supabase.
---   gpkg.py               Descarga GPKGs y lee capas con geopandas.
---   photos.py             Descarga fotos de QFieldCloud y las sube
---                         al bucket 'fotos-obra' en Supabase Storage.
+--   gpkg.py               download_file() genérico (GPKG y XLSX);
+--                         download_gpkg() alias; read_layer();
+--                         delete_all().
+--   photos.py             Descarga fotos de QFieldCloud, las comprime
+--                         con Pillow (máx 2048px, JPEG quality=82,
+--                         sin EXIF) y las sube al bucket Registro_Obra.
 --                         Devuelve URL pública para uso en Streamlit.
 --   utils.py              safe(), safe_num(), coords_from_geom().
---   sync_lookup.py        Tablas catálogo: tramos_aux_infra,
---                         presupuesto_aux_actividad.
---   sync_geo.py           Referencia geográfica: localidades,
---                         tramos_bd.
---   sync_presupuesto.py   Presupuesto: presupuesto_bd,
---                         presupuesto_componentes_bd.
---   sync_formularios.py   Formularios principales: cantidades,
---                         componentes, reporte_diario, PMT.
+--   sync_contrato.py      Contrato: descarga Contrato_IDU_1556_2025.xlsx
+--                         una vez y sincroniza:
+--                           BD_CTO_INI → contratos
+--                           BD_CTO_PRO → contratos_prorrogas
+--                           BD_CTO_ADI → contratos_adiciones
+--   sync_lookup.py        Tablas catálogo:
+--                           tramos_aux_infra       (BDTRAMOS.gpkg)
+--                           tramos_aux_tramos      (AUXTRAMOS.gpkg)
+--                           presupuesto_aux_actividad (BDPRESUPUESTO.gpkg)
+--                           presupuesto_aux_capitulos (AUXCAPITULOS.gpkg)
+--   sync_geo.py           Referencia geográfica:
+--                           localidades (loca.gpkg)
+--                           tramos_bd   (BDTRAMOS.gpkg)
+--   sync_presupuesto.py   Presupuesto:
+--                           presupuesto_bd             (BDPRESUPUESTO.gpkg)
+--                           presupuesto_componentes_bd  (Presupuesto_Componentes.gpkg)
+--                           presupuesto_componentes_aux (aux_pptcomponentes.gpkg)
+--   sync_formularios.py   Formularios principales:
+--                           registros_cantidades      (Formulario_Cantidades.gpkg)
+--                           registros_componentes     (Reporte_Componentes.gpkg)
+--                           registros_reporte_diario  (Reporte_Diario.gpkg)
+--                           formulario_pmt            (Formulario_PMT.gpkg)
 --   sync_bd.py            Tablas secundarias del reporte diario:
---                         personal, climatica, maquinaria, sst.
---   sync_rf.py            Registros fotográficos: rf_cantidades,
---                         rf_componentes, rf_reporte_diario.
---                         Descarga y sube fotos a Storage.
+--                           bd_personal_obra         (BD_PersonalObra.gpkg)
+--                           bd_condicion_climatica   (BD_CondicionClimatica.gpkg)
+--                           bd_maquinaria_obra       (BD_MaquinariaObra.gpkg)
+--                           bd_sst_ambiental         (BD_SST-Ambiental.gpkg)
+--   sync_rf.py            Registros fotográficos:
+--                           rf_cantidades      (RF_Cantidades.gpkg)
+--                           rf_componentes     (RF_Componentes.gpkg)
+--                           rf_reporte_diario  (RF_ReporteDiario.gpkg)
 --
 --   Orden de ejecución en sync_qfield.py:
---     0. Tablas lookup       (tramos_aux_infra, ppto_actividad)
---     1. Referencia geo      (localidades, tramos_bd)
---     2. Presupuesto         (presupuesto_bd, componentes_bd)
---     3. Formularios princ.  (cantidades, componentes, reporte, pmt)
---     4. Tablas secundarias  (personal, climatica, maquinaria, sst)
---     5. Fotos               (rf_cantidades, rf_componentes, rf_reporte)
+--     0. Contrato          (contratos, prorrogas, adiciones)  ← PRIMERO
+--                           otras tablas referencian contratos.id
+--     1. Tablas catálogo   (tramos_aux_infra, tramos_aux_tramos,
+--                           presupuesto_aux_actividad, presupuesto_aux_capitulos)
+--     2. Referencia geo    (localidades, tramos_bd)
+--     3. Presupuesto       (presupuesto_bd, componentes_bd, componentes_aux)
+--     4. Formularios       (cantidades, componentes, reporte_diario, pmt)
+--     5. Tablas secundarias (personal, climatica, maquinaria, sst)
+--     6. Fotos             (rf_cantidades, rf_componentes, rf_reporte_diario)
 --
---   El orden no es arbitrario: las tablas secundarias (paso 4)
---   tienen FK a registros_reporte_diario.folio, que debe existir
---   antes de insertar. Las fotos (paso 5) se procesan al final
---   porque la subida a Storage es la operación más lenta.
+--   El orden no es arbitrario:
+--   · contratos debe existir antes que cualquier tabla que lo referencia.
+--   · Las tablas secundarias (paso 5) tienen FK a reporte_diario.folio
+--     → deben existir esos registros antes de insertar.
+--   · Las fotos (paso 6) se procesan al final: son la operación más lenta
+--     (descarga + compresión + subida a Storage por cada registro).
 --
 -- ============================================================
 -- DECISIONES DE DISEÑO RELEVANTES
@@ -187,9 +300,25 @@
 --    identificar la tabla de procedencia.
 --
 --  · foto_url en rf_*
---    Cada foto se sube al bucket 'fotos-obra' de Supabase Storage
---    durante el sync. La URL pública queda en foto_url y puede
---    usarse directamente en Streamlit con st.image(url).
+--    Cada foto se sube al bucket 'Registro_Obra' de Supabase Storage
+--    durante el sync, comprimida a JPEG quality=82 / máx 2048px.
+--    La URL pública queda en foto_url y puede usarse directamente
+--    en Streamlit con st.image(url).
+--
+--  · prorrogas / adiciones mantenidos por trigger
+--    Los campos contratos.prorrogas, contratos.plazo_actual,
+--    contratos.adiciones y contratos.valor_actual NO se escriben
+--    directamente desde el sync_contrato.py. Los actualiza
+--    automáticamente el trigger trg_sync_prorrogas /
+--    trg_sync_adiciones cada vez que se inserta, modifica o
+--    elimina una fila en contratos_prorrogas / contratos_adiciones.
+--
+--  · intrventoria (typo en el Excel)
+--    La columna se llama 'intrventoria' (con typo) en el Excel
+--    Contrato_IDU_1556_2025.xlsx hoja BD_CTO_INI y en la BD.
+--    Se mantiene el nombre para garantizar la compatibilidad
+--    exacta con el archivo fuente. El código de sync acepta
+--    tanto 'intrventoria' como 'interventoria' para tolerancia.
 --
 -- ============================================================
 -- INICIALIZACIÓN DEL ESQUEMA
@@ -197,22 +326,26 @@
 --
 --   Para crear el esquema desde cero (entorno nuevo o reset):
 --
---     1. Ejecutar 000_DROP_ALL.sql   (elimina todas las tablas)
+--     1. Ejecutar 000_DROP_ALL.sql   (elimina tablas Y funciones)
 --     2. Ejecutar 001_TABLAS.sql     (crea tablas + seed data)
 --     3. Ejecutar 002_RLS.sql        (políticas de seguridad)
 --     4. Ejecutar 003_FUNCIONES_TRIGGERS.sql
 --     5. Ejecutar 004_INDICES.sql
 --     6. Ejecutar 005_USUARIOS.sql   (solo en desarrollo)
 --
---   El script 000_DROP_ALL.sql elimina en orden inverso de FK
---   para que CASCADE no genere conflictos.
+--   IMPORTANTE: 000_DROP_ALL.sql ahora también elimina las
+--   funciones (get_rol, marcar_inmutable, log_cambio_estado,
+--   crear_notificacion, sync_contrato_*). Si solo se quiere
+--   resetear los datos sin recrear el esquema, NO ejecutar 000.
 --
 -- ============================================================
 -- EJECUCIÓN LOCAL DEL SYNC (pruebas)
 -- ============================================================
 --
 --   Requisitos:
---     pip install supabase geopandas requests python-dotenv
+--     pip install -r requirements.txt
+--     # incluye: supabase, geopandas, requests, python-dotenv,
+--     #           openpyxl, Pillow
 --
 --   Crear archivo sync/.env con:
 --     SUPABASE_URL=https://<proyecto>.supabase.co
