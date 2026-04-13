@@ -30,5 +30,17 @@ DROP TABLE IF EXISTS tramos_bd                CASCADE;
 DROP TABLE IF EXISTS tramos_aux_tramos        CASCADE;
 DROP TABLE IF EXISTS tramos_aux_infra         CASCADE;
 DROP TABLE IF EXISTS localidades              CASCADE;
+DROP TABLE IF EXISTS contratos_adiciones      CASCADE;
+DROP TABLE IF EXISTS contratos_prorrogas      CASCADE;
 DROP TABLE IF EXISTS contratos                CASCADE;
 DROP TABLE IF EXISTS perfiles                 CASCADE;
+
+-- Funciones de sincronización contractual
+DROP FUNCTION IF EXISTS sync_contrato_prorrogas() CASCADE;
+DROP FUNCTION IF EXISTS sync_contrato_adiciones()  CASCADE;
+
+-- Funciones de negocio
+DROP FUNCTION IF EXISTS marcar_inmutable()    CASCADE;
+DROP FUNCTION IF EXISTS log_cambio_estado()   CASCADE;
+DROP FUNCTION IF EXISTS crear_notificacion()  CASCADE;
+DROP FUNCTION IF EXISTS get_rol()             CASCADE;

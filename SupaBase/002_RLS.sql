@@ -556,6 +556,127 @@ CREATE POLICY "ref_select" ON presupuesto_componentes_bd
 CREATE POLICY "ref_service" ON presupuesto_componentes_bd
   FOR ALL TO service_role USING (TRUE) WITH CHECK (TRUE);
 
+-- presupuesto_componentes_aux  [CORREGIDO — faltaba RLS]
+ALTER TABLE presupuesto_componentes_aux ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "ref_select" ON presupuesto_componentes_aux
+  FOR SELECT TO authenticated USING (TRUE);
+CREATE POLICY "ref_service" ON presupuesto_componentes_aux
+  FOR ALL TO service_role USING (TRUE) WITH CHECK (TRUE);
+
+
+-- ════════════════════════════════════════════════════════════
+-- FORMULARIO PMT  [CORREGIDO — faltaba RLS]
+-- Misma lógica que registros_cantidades / registros_componentes.
+-- ════════════════════════════════════════════════════════════
+
+ALTER TABLE formulario_pmt ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "pmt_inspector_insert" ON formulario_pmt;
+DROP POLICY IF EXISTS "pmt_inspector_select" ON formulario_pmt;
+DROP POLICY IF EXISTS "pmt_residente_select" ON formulario_pmt;
+DROP POLICY IF EXISTS "pmt_interventor_select" ON formulario_pmt;
+DROP POLICY IF EXISTS "pmt_admin_all"        ON formulario_pmt;
+DROP POLICY IF EXISTS "pmt_service"          ON formulario_pmt;
+
+CREATE POLICY "pmt_inspector_insert" ON formulario_pmt
+  FOR INSERT TO authenticated
+  WITH CHECK (get_rol() IN ('inspector', 'obra'));
+
+CREATE POLICY "pmt_inspector_select" ON formulario_pmt
+  FOR SELECT TO authenticated
+  USING (get_rol() IN ('inspector', 'obra'));
+
+CREATE POLICY "pmt_residente_select" ON formulario_pmt
+  FOR SELECT TO authenticated
+  USING (get_rol() IN ('residente', 'coordinador'));
+
+CREATE POLICY "pmt_interventor_select" ON formulario_pmt
+  FOR SELECT TO authenticated
+  USING (get_rol() IN ('interventor', 'supervisor'));
+
+CREATE POLICY "pmt_admin_all" ON formulario_pmt
+  FOR ALL TO authenticated
+  USING    (get_rol() = 'admin')
+  WITH CHECK (get_rol() = 'admin');
+
+CREATE POLICY "pmt_service" ON formulario_pmt
+  FOR ALL TO service_role USING (TRUE) WITH CHECK (TRUE);
+
+
+-- ════════════════════════════════════════════════════════════
+-- REGISTROS FOTOGRÁFICOS  [CORREGIDO — faltaba RLS]
+-- rf_cantidades · rf_componentes · rf_reporte_diario
+-- Lectura: todos los roles autenticados del contrato.
+-- Escritura: solo service_role (sync QField).
+-- ════════════════════════════════════════════════════════════
+
+ALTER TABLE rf_cantidades     ENABLE ROW LEVEL SECURITY;
+ALTER TABLE rf_componentes    ENABLE ROW LEVEL SECURITY;
+ALTER TABLE rf_reporte_diario ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "rf_select"  ON rf_cantidades;
+DROP POLICY IF EXISTS "rf_service" ON rf_cantidades;
+CREATE POLICY "rf_select"  ON rf_cantidades
+  FOR SELECT TO authenticated USING (TRUE);
+CREATE POLICY "rf_service" ON rf_cantidades
+  FOR ALL TO service_role USING (TRUE) WITH CHECK (TRUE);
+
+DROP POLICY IF EXISTS "rf_select"  ON rf_componentes;
+DROP POLICY IF EXISTS "rf_service" ON rf_componentes;
+CREATE POLICY "rf_select"  ON rf_componentes
+  FOR SELECT TO authenticated USING (TRUE);
+CREATE POLICY "rf_service" ON rf_componentes
+  FOR ALL TO service_role USING (TRUE) WITH CHECK (TRUE);
+
+DROP POLICY IF EXISTS "rf_select"  ON rf_reporte_diario;
+DROP POLICY IF EXISTS "rf_service" ON rf_reporte_diario;
+CREATE POLICY "rf_select"  ON rf_reporte_diario
+  FOR SELECT TO authenticated USING (TRUE);
+CREATE POLICY "rf_service" ON rf_reporte_diario
+  FOR ALL TO service_role USING (TRUE) WITH CHECK (TRUE);
+
+
+-- ════════════════════════════════════════════════════════════
+-- TABLAS SECUNDARIAS DEL REPORTE DIARIO  [CORREGIDO — faltaba RLS]
+-- bd_personal_obra · bd_condicion_climatica
+-- bd_maquinaria_obra · bd_sst_ambiental
+-- Lectura: todos los roles autenticados.
+-- Escritura: solo service_role (sync QField).
+-- ════════════════════════════════════════════════════════════
+
+ALTER TABLE bd_personal_obra       ENABLE ROW LEVEL SECURITY;
+ALTER TABLE bd_condicion_climatica ENABLE ROW LEVEL SECURITY;
+ALTER TABLE bd_maquinaria_obra     ENABLE ROW LEVEL SECURITY;
+ALTER TABLE bd_sst_ambiental       ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "bd_select"  ON bd_personal_obra;
+DROP POLICY IF EXISTS "bd_service" ON bd_personal_obra;
+CREATE POLICY "bd_select"  ON bd_personal_obra
+  FOR SELECT TO authenticated USING (TRUE);
+CREATE POLICY "bd_service" ON bd_personal_obra
+  FOR ALL TO service_role USING (TRUE) WITH CHECK (TRUE);
+
+DROP POLICY IF EXISTS "bd_select"  ON bd_condicion_climatica;
+DROP POLICY IF EXISTS "bd_service" ON bd_condicion_climatica;
+CREATE POLICY "bd_select"  ON bd_condicion_climatica
+  FOR SELECT TO authenticated USING (TRUE);
+CREATE POLICY "bd_service" ON bd_condicion_climatica
+  FOR ALL TO service_role USING (TRUE) WITH CHECK (TRUE);
+
+DROP POLICY IF EXISTS "bd_select"  ON bd_maquinaria_obra;
+DROP POLICY IF EXISTS "bd_service" ON bd_maquinaria_obra;
+CREATE POLICY "bd_select"  ON bd_maquinaria_obra
+  FOR SELECT TO authenticated USING (TRUE);
+CREATE POLICY "bd_service" ON bd_maquinaria_obra
+  FOR ALL TO service_role USING (TRUE) WITH CHECK (TRUE);
+
+DROP POLICY IF EXISTS "bd_select"  ON bd_sst_ambiental;
+DROP POLICY IF EXISTS "bd_service" ON bd_sst_ambiental;
+CREATE POLICY "bd_select"  ON bd_sst_ambiental
+  FOR SELECT TO authenticated USING (TRUE);
+CREATE POLICY "bd_service" ON bd_sst_ambiental
+  FOR ALL TO service_role USING (TRUE) WITH CHECK (TRUE);
+
 
 -- ════════════════════════════════════════════════════════════
 -- NOTA DE DESPLIEGUE — SUPABASE_ANON_KEY

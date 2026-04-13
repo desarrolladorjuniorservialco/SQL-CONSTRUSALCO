@@ -184,3 +184,52 @@ CREATE INDEX IF NOT EXISTS cadi_idx_contrato_numero
 -- Filtro por fecha de firma (búsqueda por período)
 CREATE INDEX IF NOT EXISTS cadi_idx_fecha_firma
   ON contratos_adiciones(fecha_firma);
+
+
+-- ════════════════════════════════════════════════════════════
+-- formulario_pmt  (prefijo pmt_)  [CORREGIDO — faltaban índices]
+-- ════════════════════════════════════════════════════════════
+
+CREATE INDEX IF NOT EXISTS pmt_idx_folio
+  ON formulario_pmt(folio);
+
+CREATE INDEX IF NOT EXISTS pmt_idx_contrato
+  ON formulario_pmt(contrato_id);
+
+CREATE INDEX IF NOT EXISTS pmt_idx_vigencia
+  ON formulario_pmt(inicio_vigencia, fin_vigencia);
+
+
+-- ════════════════════════════════════════════════════════════
+-- Tablas secundarias del Reporte Diario  (prefijo bd_)
+-- [CORREGIDO — faltaban índices en FK folio]
+-- folio es la FK a registros_reporte_diario; sin índice cada
+-- join o DELETE CASCADE hace un seq scan sobre la tabla.
+-- ════════════════════════════════════════════════════════════
+
+CREATE INDEX IF NOT EXISTS bd_personal_idx_folio
+  ON bd_personal_obra(folio);
+
+CREATE INDEX IF NOT EXISTS bd_climatica_idx_folio
+  ON bd_condicion_climatica(folio);
+
+CREATE INDEX IF NOT EXISTS bd_maquinaria_idx_folio
+  ON bd_maquinaria_obra(folio);
+
+CREATE INDEX IF NOT EXISTS bd_sst_idx_folio
+  ON bd_sst_ambiental(folio);
+
+
+-- ════════════════════════════════════════════════════════════
+-- Registros fotográficos  (prefijo rf_)
+-- [CORREGIDO — faltaban índices en folio y foto_url]
+-- ════════════════════════════════════════════════════════════
+
+CREATE INDEX IF NOT EXISTS rf_cant_idx_folio
+  ON rf_cantidades(folio);
+
+CREATE INDEX IF NOT EXISTS rf_comp_idx_folio
+  ON rf_componentes(folio);
+
+CREATE INDEX IF NOT EXISTS rf_rd_idx_folio
+  ON rf_reporte_diario(folio);
