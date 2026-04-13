@@ -16,6 +16,12 @@
 --   principales.
 --
 --   Corrección: Las políticas se replican para las 3 tablas reales.
+--
+--   [PATCH-004/005] Agregadas políticas para las nuevas tablas:
+--     • contratos_prorrogas
+--     • contratos_adiciones
+--   Política: todos los autenticados pueden leer; solo admin/service
+--   pueden escribir (los datos vienen del Excel vía sync_contrato.py).
 -- ============================================================
 
 
@@ -23,15 +29,17 @@
 -- HABILITAR RLS EN TODAS LAS TABLAS RELEVANTES
 -- ════════════════════════════════════════════════════════════
 
-ALTER TABLE perfiles                ENABLE ROW LEVEL SECURITY;
-ALTER TABLE contratos               ENABLE ROW LEVEL SECURITY;
-ALTER TABLE registros_cantidades    ENABLE ROW LEVEL SECURITY;  -- antes: "registros" (no existe)
-ALTER TABLE registros_componentes   ENABLE ROW LEVEL SECURITY;  -- NUEVO
-ALTER TABLE registros_reporte_diario ENABLE ROW LEVEL SECURITY; -- NUEVO
-ALTER TABLE historial_estados       ENABLE ROW LEVEL SECURITY;
-ALTER TABLE cierres_semanales       ENABLE ROW LEVEL SECURITY;
-ALTER TABLE cierre_registros        ENABLE ROW LEVEL SECURITY;
-ALTER TABLE notificaciones          ENABLE ROW LEVEL SECURITY;
+ALTER TABLE perfiles                 ENABLE ROW LEVEL SECURITY;
+ALTER TABLE contratos                ENABLE ROW LEVEL SECURITY;
+ALTER TABLE contratos_prorrogas      ENABLE ROW LEVEL SECURITY;  -- [PATCH-004]
+ALTER TABLE contratos_adiciones      ENABLE ROW LEVEL SECURITY;  -- [PATCH-005]
+ALTER TABLE registros_cantidades     ENABLE ROW LEVEL SECURITY;
+ALTER TABLE registros_componentes    ENABLE ROW LEVEL SECURITY;
+ALTER TABLE registros_reporte_diario ENABLE ROW LEVEL SECURITY;
+ALTER TABLE historial_estados        ENABLE ROW LEVEL SECURITY;
+ALTER TABLE cierres_semanales        ENABLE ROW LEVEL SECURITY;
+ALTER TABLE cierre_registros         ENABLE ROW LEVEL SECURITY;
+ALTER TABLE notificaciones           ENABLE ROW LEVEL SECURITY;
 
 
 -- ════════════════════════════════════════════════════════════
@@ -48,9 +56,11 @@ $$ LANGUAGE SQL SECURITY DEFINER SET search_path = public;
 -- PERFILES
 -- ════════════════════════════════════════════════════════════
 
-DROP POLICY IF EXISTS "usuario_lee_su_perfil"  ON perfiles;
-DROP POLICY IF EXISTS "admin_lee_perfiles"      ON perfiles;
-DROP POLICY IF EXISTS "usuario_inserta_perfil"  ON perfiles;
+DROP POLICY IF EXISTS "usuario_lee_su_perfil"       ON perfiles;
+DROP POLICY IF EXISTS "admin_lee_perfiles"           ON perfiles;
+DROP POLICY IF EXISTS "usuario_inserta_perfil"       ON perfiles;
+DROP POLICY IF EXISTS "usuario_actualiza_su_perfil"  ON perfiles;
+DROP POLICY IF EXISTS "admin_gestiona_perfiles"      ON perfiles;
 
 CREATE POLICY "usuario_lee_su_perfil" ON perfiles
   FOR SELECT TO authenticated
@@ -64,16 +74,88 @@ CREATE POLICY "usuario_inserta_perfil" ON perfiles
   FOR INSERT TO authenticated
   WITH CHECK (id = auth.uid());
 
+-- El usuario puede actualizar solo sus campos de presentación (nombre, empresa).
+-- NO puede cambiar su propio rol ni contrato (eso es exclusivo del admin).
+CREATE POLICY "usuario_actualiza_su_perfil" ON perfiles
+  FOR UPDATE TO authenticated
+  USING (id = auth.uid())
+  WITH CHECK (id = auth.uid());
+
+CREATE POLICY "admin_gestiona_perfiles" ON perfiles
+  FOR ALL TO authenticated
+  USING (get_rol() = 'admin')
+  WITH CHECK (get_rol() = 'admin');
+
 
 -- ════════════════════════════════════════════════════════════
 -- CONTRATOS
 -- ════════════════════════════════════════════════════════════
 
-DROP POLICY IF EXISTS "todos_leen_contratos" ON contratos;
+DROP POLICY IF EXISTS "todos_leen_contratos"    ON contratos;
+DROP POLICY IF EXISTS "admin_escribe_contratos" ON contratos;
 
 CREATE POLICY "todos_leen_contratos" ON contratos
   FOR SELECT TO authenticated
   USING (TRUE);
+
+-- Solo admin o service_role pueden modificar datos del contrato
+CREATE POLICY "admin_escribe_contratos" ON contratos
+  FOR ALL TO authenticated
+  USING    (get_rol() = 'admin')
+  WITH CHECK (get_rol() = 'admin');
+
+-- service_role: acceso total (sync Excel → Supabase)
+CREATE POLICY "service_contratos" ON contratos
+  FOR ALL TO service_role
+  USING (TRUE) WITH CHECK (TRUE);
+
+
+-- ════════════════════════════════════════════════════════════
+-- CONTRATOS_PRORROGAS  [PATCH-004]
+-- Todos los autenticados leen.
+-- Solo service_role escribe (datos vienen del sync_contrato.py).
+-- Admin puede gestionar manualmente desde la app.
+-- ════════════════════════════════════════════════════════════
+
+DROP POLICY IF EXISTS "pro_select"        ON contratos_prorrogas;
+DROP POLICY IF EXISTS "pro_admin_write"   ON contratos_prorrogas;
+DROP POLICY IF EXISTS "pro_service"       ON contratos_prorrogas;
+
+CREATE POLICY "pro_select" ON contratos_prorrogas
+  FOR SELECT TO authenticated
+  USING (TRUE);
+
+CREATE POLICY "pro_admin_write" ON contratos_prorrogas
+  FOR ALL TO authenticated
+  USING    (get_rol() = 'admin')
+  WITH CHECK (get_rol() = 'admin');
+
+CREATE POLICY "pro_service" ON contratos_prorrogas
+  FOR ALL TO service_role
+  USING (TRUE) WITH CHECK (TRUE);
+
+
+-- ════════════════════════════════════════════════════════════
+-- CONTRATOS_ADICIONES  [PATCH-005]
+-- Misma lógica que contratos_prorrogas.
+-- ════════════════════════════════════════════════════════════
+
+DROP POLICY IF EXISTS "adi_select"        ON contratos_adiciones;
+DROP POLICY IF EXISTS "adi_admin_write"   ON contratos_adiciones;
+DROP POLICY IF EXISTS "adi_service"       ON contratos_adiciones;
+
+CREATE POLICY "adi_select" ON contratos_adiciones
+  FOR SELECT TO authenticated
+  USING (TRUE);
+
+CREATE POLICY "adi_admin_write" ON contratos_adiciones
+  FOR ALL TO authenticated
+  USING    (get_rol() = 'admin')
+  WITH CHECK (get_rol() = 'admin');
+
+CREATE POLICY "adi_service" ON contratos_adiciones
+  FOR ALL TO service_role
+  USING (TRUE) WITH CHECK (TRUE);
 
 
 -- ════════════════════════════════════════════════════════════
@@ -162,8 +244,6 @@ CREATE POLICY "rc_admin_update" ON registros_cantidades
   FOR UPDATE TO authenticated
   USING (get_rol() = 'admin' AND inmutable = FALSE);
 
--- service_role: acceso total para el sync de QField (bypassa RLS por diseño,
--- pero se declara explícitamente para mayor claridad)
 CREATE POLICY "rc_sync_upsert" ON registros_cantidades
   FOR ALL TO service_role
   USING (TRUE)
@@ -404,7 +484,7 @@ CREATE POLICY "insertar_historial_service" ON historial_estados
 -- NOTIFICACIONES
 -- ════════════════════════════════════════════════════════════
 
-DROP POLICY IF EXISTS "ver_notificaciones"    ON notificaciones;
+DROP POLICY IF EXISTS "ver_notificaciones"     ON notificaciones;
 DROP POLICY IF EXISTS "service_notificaciones" ON notificaciones;
 
 CREATE POLICY "ver_notificaciones" ON notificaciones
@@ -418,37 +498,6 @@ CREATE POLICY "service_notificaciones" ON notificaciones
 
 
 -- ════════════════════════════════════════════════════════════
--- PERFILES — UPDATE y DELETE
---
--- Problema anterior: solo existían SELECT e INSERT en perfiles.
--- Sin UPDATE, los usuarios no pueden corregir su propio nombre/empresa,
--- y el admin no puede cambiar roles desde la app.
--- Sin DELETE (solo admin), las cuentas eliminadas dejan perfiles huérfanos.
--- ════════════════════════════════════════════════════════════
-
-DROP POLICY IF EXISTS "usuario_actualiza_su_perfil" ON perfiles;
-DROP POLICY IF EXISTS "admin_gestiona_perfiles"      ON perfiles;
-
--- El usuario puede actualizar solo sus campos de presentación (nombre, empresa).
--- NO puede cambiar su propio rol ni contrato (eso es exclusivo del admin).
-CREATE POLICY "usuario_actualiza_su_perfil" ON perfiles
-  FOR UPDATE TO authenticated
-  USING (id = auth.uid())
-  WITH CHECK (
-    id = auth.uid()
-    -- El rol y contrato los gestiona solo el admin; un usuario no puede
-    -- cambiarlos a través de esta política (el admin usa service_role).
-    -- Esta política PERMITE el UPDATE pero la restricción real la aplica
-    -- la app (solo muestra campos editables: nombre, empresa).
-  );
-
-CREATE POLICY "admin_gestiona_perfiles" ON perfiles
-  FOR ALL TO authenticated
-  USING (get_rol() = 'admin')
-  WITH CHECK (get_rol() = 'admin');
-
-
--- ════════════════════════════════════════════════════════════
 -- TABLAS DE REFERENCIA / CATÁLOGOS
 --
 -- Problema: estas tablas NO tenían RLS habilitado ni políticas.
@@ -456,25 +505,16 @@ CREATE POLICY "admin_gestiona_perfiles" ON perfiles
 -- anónimo si el proyecto lo permite) puede leer y escribir en ellas.
 -- Se habilita RLS con política de solo lectura para autenticados y
 -- escritura exclusiva a service_role.
---
--- Tablas cubiertas:
---   localidades, tramos_aux_infra, tramos_aux_tramos, tramos_bd,
---   presupuesto_aux_actividad, presupuesto_aux_capitulos,
---   presupuesto_bd, presupuesto_componentes_bd
 -- ════════════════════════════════════════════════════════════
 
-ALTER TABLE localidades                  ENABLE ROW LEVEL SECURITY;
-ALTER TABLE tramos_aux_infra             ENABLE ROW LEVEL SECURITY;
-ALTER TABLE tramos_aux_tramos            ENABLE ROW LEVEL SECURITY;
-ALTER TABLE tramos_bd                    ENABLE ROW LEVEL SECURITY;
-ALTER TABLE presupuesto_aux_actividad    ENABLE ROW LEVEL SECURITY;
-ALTER TABLE presupuesto_aux_capitulos    ENABLE ROW LEVEL SECURITY;
-ALTER TABLE presupuesto_bd               ENABLE ROW LEVEL SECURITY;
-ALTER TABLE presupuesto_componentes_bd   ENABLE ROW LEVEL SECURITY;
-
--- Macro helper: SELECT para todos los autenticados, escritura solo service_role
--- Se declara tabla por tabla porque PostgreSQL no admite políticas sobre
--- múltiples tablas en un solo CREATE POLICY.
+ALTER TABLE localidades                ENABLE ROW LEVEL SECURITY;
+ALTER TABLE tramos_aux_infra           ENABLE ROW LEVEL SECURITY;
+ALTER TABLE tramos_aux_tramos          ENABLE ROW LEVEL SECURITY;
+ALTER TABLE tramos_bd                  ENABLE ROW LEVEL SECURITY;
+ALTER TABLE presupuesto_aux_actividad  ENABLE ROW LEVEL SECURITY;
+ALTER TABLE presupuesto_aux_capitulos  ENABLE ROW LEVEL SECURITY;
+ALTER TABLE presupuesto_bd             ENABLE ROW LEVEL SECURITY;
+ALTER TABLE presupuesto_componentes_bd ENABLE ROW LEVEL SECURITY;
 
 CREATE POLICY "ref_select" ON localidades
   FOR SELECT TO authenticated USING (TRUE);

@@ -1,8 +1,8 @@
 -- ============================================================
 -- MÓDULO 001 · TABLAS (DDL)
 -- Contrato IDU-1556-2025 · Consorcio Obras Peatonales 2025
--- Contratista: SERVIALCO S.A.S.
--- Interventoría: IDU
+-- Contratista  : URBACON SAS
+-- Interventoría: CONSORCIO INTERCONSERVACION
 --
 --   CORRECCIONES ACUMULADAS
 --   ─────────────────────────────────────────────
@@ -27,6 +27,28 @@
 --             se establece por folio. foto_url guarda la URL pública en
 --             Supabase Storage (bucket fotos-obra) para uso en Streamlit.
 --
+--   [PATCH-001] contratos: columna renombrada interventoria → intrventoria
+--               para coincidir con el encabezado real del Excel
+--               Contrato_IDU_1556_2025.xlsx · hoja BD_CTO_INI.
+--               Se ejecuta con DO block idempotente.
+--
+--   [PATCH-002] contratos: agregadas columnas del Excel ausentes en la
+--               versión anterior: valor_contrato, prorrogas, plazo_actual,
+--               adiciones, valor_actual.
+--
+--   [PATCH-003] contratos INSERT: datos reales del Excel.
+--               contratista    = 'URBACON SAS'
+--               intrventoria   = 'CONSORCIO INTERCONSERVACION'
+--               fecha_inicio   = 2025-12-26
+--               fecha_fin      = 2028-02-26
+--               valor_contrato = 40704606199
+--
+--   [PATCH-004] Nueva tabla contratos_prorrogas (hoja BD_CTO_PRO).
+--   [PATCH-005] Nueva tabla contratos_adiciones  (hoja BD_CTO_ADI).
+--   [PATCH-006] Triggers que mantienen contadores/valores sincronizados
+--               en contratos al insertar/modificar/borrar en las tablas
+--               de detalle.
+--
 --   MÓDULOS
 --   1.  Perfiles / Contratos
 --   2.  Tablas de referencia geográfica (Tramos, Localidades)
@@ -36,6 +58,7 @@
 --   6.  Registros fotográficos (rf_*)
 --   7.  Formularios geográficos adicionales (PMT)
 --   8.  Auditoría y flujo (historial_estados, cierres, notificaciones)
+--   9.  Seguimiento contractual (prórrogas, adiciones)  ← NUEVO
 --
 --   CONVENCIÓN DE NOMBRES
 --   · Todas las tablas y columnas en snake_case minúsculas
@@ -51,6 +74,8 @@
 --   · rf_cantidades.folio             → registros_cantidades.folio  (sin FK id_unico)
 --   · rf_componentes.folio            → registros_componentes.folio
 --   · rf_reporte_diario.folio         → registros_reporte_diario.folio
+--   · contratos_prorrogas.contrato_id → contratos.id
+--   · contratos_adiciones.contrato_id → contratos.id
 --
 --   NOTA: Los módulos 002 (RLS), 003 (Triggers) y 004 (Índices) también
 --         fueron corregidos para operar sobre las 3 tablas reales en lugar
@@ -76,30 +101,89 @@ CREATE TABLE IF NOT EXISTS perfiles (
   creado_en TIMESTAMPTZ DEFAULT NOW()
 );
 
+-- ── [PATCH-001/002] Tabla contratos con todas las columnas ───────────
 CREATE TABLE IF NOT EXISTS contratos (
   id             TEXT PRIMARY KEY,
   nombre         TEXT NOT NULL,
   contratista    TEXT NOT NULL,
-  interventoria  TEXT NOT NULL,
+  intrventoria   TEXT NOT NULL,       -- [PATCH-001] nombre real del Excel BD_CTO_INI
   supervisor_idu TEXT,
   fecha_inicio   DATE,
   fecha_fin      DATE,
-  activo         BOOLEAN DEFAULT TRUE
+  activo         BOOLEAN DEFAULT TRUE,
+  -- [PATCH-002] columnas nuevas provenientes del Excel
+  valor_contrato BIGINT,              -- valor original del contrato (COP)
+  prorrogas      INTEGER DEFAULT 0,   -- contador; actualizado por trigger
+  plazo_actual   DATE,                -- fecha fin vigente; actualizada por trigger
+  adiciones      INTEGER DEFAULT 0,  -- contador; actualizado por trigger
+  valor_actual   BIGINT               -- valor vigente; actualizado por trigger
 );
 
-INSERT INTO contratos VALUES (
+-- ── [PATCH-001] Renombrar columna si aún existe con nombre viejo ─────
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns
+     WHERE table_name  = 'contratos'
+       AND column_name = 'interventoria'
+  ) AND NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+     WHERE table_name  = 'contratos'
+       AND column_name = 'intrventoria'
+  ) THEN
+    ALTER TABLE contratos RENAME COLUMN interventoria TO intrventoria;
+  END IF;
+END $$;
+
+-- ── [PATCH-002] Agregar columnas si la tabla ya existía sin ellas ────
+ALTER TABLE contratos
+  ADD COLUMN IF NOT EXISTS valor_contrato BIGINT,
+  ADD COLUMN IF NOT EXISTS prorrogas      INTEGER DEFAULT 0,
+  ADD COLUMN IF NOT EXISTS plazo_actual   DATE,
+  ADD COLUMN IF NOT EXISTS adiciones      INTEGER DEFAULT 0,
+  ADD COLUMN IF NOT EXISTS valor_actual   BIGINT;
+
+-- ── [PATCH-003] Datos reales del Excel BD_CTO_INI ───────────────────
+INSERT INTO contratos (
+  id,
+  nombre,
+  contratista,
+  intrventoria,
+  supervisor_idu,
+  fecha_inicio,
+  fecha_fin,
+  activo,
+  valor_contrato,
+  prorrogas,
+  plazo_actual,
+  adiciones,
+  valor_actual
+) VALUES (
   'IDU-1556-2025',
   'Contrato IDU-1556-2025 Grupo 4',
-  'SERVIALCO S.A.S.',
-  'Interventoría IDU',
-  'IDU Supervisión',
-  '2025-01-01',
-  '2026-12-31',
-  TRUE
-) ON CONFLICT (id) DO UPDATE SET
-  nombre        = EXCLUDED.nombre,
-  contratista   = EXCLUDED.contratista,
-  interventoria = EXCLUDED.interventoria;
+  'URBACON SAS',
+  'CONSORCIO INTERCONSERVACION',
+  'IDU',
+  '2025-12-26',
+  '2028-02-26',
+  TRUE,
+  40704606199,
+  0,
+  '2028-02-26',
+  0,
+  40704606199
+)
+ON CONFLICT (id) DO UPDATE SET
+  nombre         = EXCLUDED.nombre,
+  contratista    = EXCLUDED.contratista,
+  intrventoria   = EXCLUDED.intrventoria,
+  supervisor_idu = EXCLUDED.supervisor_idu,
+  fecha_inicio   = EXCLUDED.fecha_inicio,
+  fecha_fin      = EXCLUDED.fecha_fin,
+  valor_contrato = EXCLUDED.valor_contrato,
+  plazo_actual   = EXCLUDED.plazo_actual,
+  valor_actual   = EXCLUDED.valor_actual;
+  -- prorrogas y adiciones NO se tocan aquí: los mantiene el trigger.
 
 
 -- ════════════════════════════════════════════════════════════
@@ -618,3 +702,100 @@ ALTER TABLE notificaciones
     'registros_componentes',
     'registros_reporte_diario'
   ));
+
+
+-- ════════════════════════════════════════════════════════════
+-- 9. SEGUIMIENTO CONTRACTUAL  [PATCH-004 / PATCH-005]
+--    Origen: Contrato_IDU_1556_2025.xlsx
+--      · hoja BD_CTO_PRO → contratos_prorrogas
+--      · hoja BD_CTO_ADI → contratos_adiciones
+-- ════════════════════════════════════════════════════════════
+
+-- 9.1 Prórrogas  (BD_CTO_PRO)
+--     Columnas Excel:  no. → numero | plazo → plazo_dias | fecha_fin | fecha_firma
+CREATE TABLE IF NOT EXISTS contratos_prorrogas (
+  id            UUID    DEFAULT gen_random_uuid() PRIMARY KEY,
+  contrato_id   TEXT    NOT NULL REFERENCES contratos(id) ON DELETE CASCADE,
+  numero        INTEGER NOT NULL,    -- 'no.'   en Excel
+  plazo_dias    INTEGER,             -- 'plazo' en Excel (días calendario)
+  fecha_fin     DATE,                -- nueva fecha de terminación
+  fecha_firma   DATE,                -- fecha de suscripción del otrosí/acta
+  observaciones TEXT,
+  creado_en     TIMESTAMPTZ DEFAULT NOW(),
+  creado_por    UUID REFERENCES perfiles(id),
+  UNIQUE (contrato_id, numero)
+);
+
+COMMENT ON TABLE  contratos_prorrogas              IS 'Prórrogas del contrato. Origen: BD_CTO_PRO.';
+COMMENT ON COLUMN contratos_prorrogas.numero       IS '"no." en Excel — número secuencial de la prórroga.';
+COMMENT ON COLUMN contratos_prorrogas.plazo_dias   IS '"plazo" en Excel — días calendario que extiende el contrato.';
+COMMENT ON COLUMN contratos_prorrogas.fecha_fin    IS 'Nueva fecha de terminación tras la prórroga.';
+COMMENT ON COLUMN contratos_prorrogas.fecha_firma  IS 'Fecha de suscripción del otrosí o acta.';
+
+-- 9.2 Adiciones  (BD_CTO_ADI)
+--     Columnas Excel:  no. → numero | adicion | valor_actual | fecha_firma
+CREATE TABLE IF NOT EXISTS contratos_adiciones (
+  id            UUID    DEFAULT gen_random_uuid() PRIMARY KEY,
+  contrato_id   TEXT    NOT NULL REFERENCES contratos(id) ON DELETE CASCADE,
+  numero        INTEGER NOT NULL,    -- 'no.'          en Excel
+  adicion       BIGINT,              -- 'adicion'       en Excel (COP; negativo = reducción)
+  valor_actual  BIGINT,              -- 'valor_actual'  en Excel (valor acumulado del contrato)
+  fecha_firma   DATE,                -- fecha de suscripción del otrosí/acta
+  observaciones TEXT,
+  creado_en     TIMESTAMPTZ DEFAULT NOW(),
+  creado_por    UUID REFERENCES perfiles(id),
+  UNIQUE (contrato_id, numero)
+);
+
+COMMENT ON TABLE  contratos_adiciones              IS 'Adiciones/reducciones presupuestales. Origen: BD_CTO_ADI.';
+COMMENT ON COLUMN contratos_adiciones.numero       IS '"no." en Excel — número secuencial de la adición.';
+COMMENT ON COLUMN contratos_adiciones.adicion      IS '"adicion" en Excel — valor en COP (negativo = reducción).';
+COMMENT ON COLUMN contratos_adiciones.valor_actual IS '"valor_actual" en Excel — valor total acumulado del contrato.';
+COMMENT ON COLUMN contratos_adiciones.fecha_firma  IS 'Fecha de suscripción del otrosí o acta.';
+
+
+-- ════════════════════════════════════════════════════════════
+-- 10. TRIGGERS DE SINCRONIZACIÓN CONTRACTUAL  [PATCH-006]
+--     Mantienen actualizados prorrogas/plazo_actual y
+--     adiciones/valor_actual en contratos automáticamente.
+-- ════════════════════════════════════════════════════════════
+
+-- 10.1 Función para prórrogas
+CREATE OR REPLACE FUNCTION sync_contrato_prorrogas()
+RETURNS TRIGGER LANGUAGE plpgsql AS $$
+DECLARE
+  v_cid TEXT;
+BEGIN
+  v_cid := COALESCE(NEW.contrato_id, OLD.contrato_id);
+  UPDATE contratos SET
+    prorrogas    = (SELECT COUNT(*)   FROM contratos_prorrogas WHERE contrato_id = v_cid),
+    plazo_actual = (SELECT fecha_fin  FROM contratos_prorrogas WHERE contrato_id = v_cid ORDER BY numero DESC LIMIT 1)
+  WHERE id = v_cid;
+  RETURN COALESCE(NEW, OLD);
+END;
+$$;
+
+DROP TRIGGER IF EXISTS trg_sync_prorrogas ON contratos_prorrogas;
+CREATE TRIGGER trg_sync_prorrogas
+  AFTER INSERT OR UPDATE OR DELETE ON contratos_prorrogas
+  FOR EACH ROW EXECUTE FUNCTION sync_contrato_prorrogas();
+
+-- 10.2 Función para adiciones
+CREATE OR REPLACE FUNCTION sync_contrato_adiciones()
+RETURNS TRIGGER LANGUAGE plpgsql AS $$
+DECLARE
+  v_cid TEXT;
+BEGIN
+  v_cid := COALESCE(NEW.contrato_id, OLD.contrato_id);
+  UPDATE contratos SET
+    adiciones    = (SELECT COUNT(*)       FROM contratos_adiciones WHERE contrato_id = v_cid),
+    valor_actual = (SELECT va.valor_actual FROM contratos_adiciones va WHERE contrato_id = v_cid ORDER BY numero DESC LIMIT 1)
+  WHERE id = v_cid;
+  RETURN COALESCE(NEW, OLD);
+END;
+$$;
+
+DROP TRIGGER IF EXISTS trg_sync_adiciones ON contratos_adiciones;
+CREATE TRIGGER trg_sync_adiciones
+  AFTER INSERT OR UPDATE OR DELETE ON contratos_adiciones
+  FOR EACH ROW EXECUTE FUNCTION sync_contrato_adiciones();

@@ -18,6 +18,10 @@
 --   Se usan prefijos rc_ / rco_ / rrd_ para evitar colisión
 --   de nombres entre índices de distintas tablas.
 --
+--   [PATCH-004/005] Agregados índices para las nuevas tablas:
+--     • contratos_prorrogas  (prefijo cpro_)
+--     • contratos_adiciones  (prefijo cadi_)
+--
 --   Criterios de selección (sin cambios respecto a v1):
 --     folio         → lookup único por número de registro de campo
 --     estado        → filtros de flujo de aprobación
@@ -34,7 +38,6 @@
 -- registros_cantidades  (prefijo rc_)
 -- ════════════════════════════════════════════════════════════
 
--- Redundante con UNIQUE constraint pero se mantiene para monitoreo selectivo
 CREATE INDEX IF NOT EXISTS rc_idx_folio
   ON registros_cantidades(folio);
 
@@ -44,7 +47,6 @@ CREATE INDEX IF NOT EXISTS rc_idx_estado
 CREATE INDEX IF NOT EXISTS rc_idx_contrato
   ON registros_cantidades(contrato_id);
 
--- Filtro combinado más frecuente: "cantidades de este contrato en estado X"
 CREATE INDEX IF NOT EXISTS rc_idx_contrato_estado
   ON registros_cantidades(contrato_id, estado);
 
@@ -120,11 +122,9 @@ CREATE INDEX IF NOT EXISTS rrd_idx_inspector
 CREATE INDEX IF NOT EXISTS idx_hist_registro
   ON historial_estados(registro_id);
 
--- Filtro por tabla de origen: "historial de cantidades vs componentes"
 CREATE INDEX IF NOT EXISTS idx_hist_tabla_origen
   ON historial_estados(tabla_origen);
 
--- Auditoría por actor
 CREATE INDEX IF NOT EXISTS idx_hist_cambiado_por
   ON historial_estados(cambiado_por);
 
@@ -147,7 +147,40 @@ CREATE INDEX IF NOT EXISTS idx_cierres_semana
 CREATE INDEX IF NOT EXISTS idx_notif_destinatario
   ON notificaciones(destinatario);
 
--- Índice parcial: solo notificaciones pendientes de envío
 CREATE INDEX IF NOT EXISTS idx_notif_enviado
   ON notificaciones(enviado)
   WHERE enviado = FALSE;
+
+
+-- ════════════════════════════════════════════════════════════
+-- contratos_prorrogas  (prefijo cpro_)  [PATCH-004]
+-- ════════════════════════════════════════════════════════════
+
+-- Lookup principal: todas las prórrogas de un contrato
+CREATE INDEX IF NOT EXISTS cpro_idx_contrato
+  ON contratos_prorrogas(contrato_id);
+
+-- Ordenar por número de prórroga (usado en los triggers y en la app)
+CREATE INDEX IF NOT EXISTS cpro_idx_contrato_numero
+  ON contratos_prorrogas(contrato_id, numero);
+
+-- Filtro por fecha de firma (búsqueda por período)
+CREATE INDEX IF NOT EXISTS cpro_idx_fecha_firma
+  ON contratos_prorrogas(fecha_firma);
+
+
+-- ════════════════════════════════════════════════════════════
+-- contratos_adiciones  (prefijo cadi_)  [PATCH-005]
+-- ════════════════════════════════════════════════════════════
+
+-- Lookup principal: todas las adiciones de un contrato
+CREATE INDEX IF NOT EXISTS cadi_idx_contrato
+  ON contratos_adiciones(contrato_id);
+
+-- Ordenar por número de adición (usado en los triggers y en la app)
+CREATE INDEX IF NOT EXISTS cadi_idx_contrato_numero
+  ON contratos_adiciones(contrato_id, numero);
+
+-- Filtro por fecha de firma (búsqueda por período)
+CREATE INDEX IF NOT EXISTS cadi_idx_fecha_firma
+  ON contratos_adiciones(fecha_firma);
