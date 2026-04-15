@@ -232,8 +232,11 @@ CREATE POLICY "rc_interventor_update" ON registros_cantidades
   )
   WITH CHECK (
     get_rol() = 'interventor'
-    AND estado IN ('APROBADO','DEVUELTO')
-    AND inmutable = FALSE
+    AND (
+      -- Al aprobar el trigger tg_inmutable pone inmutable=TRUE antes del WITH CHECK
+      (estado = 'APROBADO')
+      OR (estado = 'DEVUELTO' AND inmutable = FALSE)
+    )
   );
 
 CREATE POLICY "rc_admin_select" ON registros_cantidades
@@ -242,7 +245,15 @@ CREATE POLICY "rc_admin_select" ON registros_cantidades
 
 CREATE POLICY "rc_admin_update" ON registros_cantidades
   FOR UPDATE TO authenticated
-  USING (get_rol() = 'admin' AND inmutable = FALSE);
+  USING (get_rol() = 'admin' AND inmutable = FALSE)
+  WITH CHECK (
+    get_rol() = 'admin'
+    AND (
+      -- Al aprobar el trigger tg_inmutable pone inmutable=TRUE antes del WITH CHECK
+      (estado = 'APROBADO')
+      OR inmutable = FALSE
+    )
+  );
 
 CREATE POLICY "rc_sync_upsert" ON registros_cantidades
   FOR ALL TO service_role
@@ -315,8 +326,10 @@ CREATE POLICY "rco_interventor_update" ON registros_componentes
   )
   WITH CHECK (
     get_rol() = 'interventor'
-    AND estado IN ('APROBADO','DEVUELTO')
-    AND inmutable = FALSE
+    AND (
+      (estado = 'APROBADO')
+      OR (estado = 'DEVUELTO' AND inmutable = FALSE)
+    )
   );
 
 CREATE POLICY "rco_admin_select" ON registros_componentes
@@ -325,7 +338,14 @@ CREATE POLICY "rco_admin_select" ON registros_componentes
 
 CREATE POLICY "rco_admin_update" ON registros_componentes
   FOR UPDATE TO authenticated
-  USING (get_rol() = 'admin' AND inmutable = FALSE);
+  USING (get_rol() = 'admin' AND inmutable = FALSE)
+  WITH CHECK (
+    get_rol() = 'admin'
+    AND (
+      (estado = 'APROBADO')
+      OR inmutable = FALSE
+    )
+  );
 
 CREATE POLICY "rco_sync_upsert" ON registros_componentes
   FOR ALL TO service_role
@@ -398,8 +418,10 @@ CREATE POLICY "rrd_interventor_update" ON registros_reporte_diario
   )
   WITH CHECK (
     get_rol() = 'interventor'
-    AND estado IN ('APROBADO','DEVUELTO')
-    AND inmutable = FALSE
+    AND (
+      (estado = 'APROBADO')
+      OR (estado = 'DEVUELTO' AND inmutable = FALSE)
+    )
   );
 
 CREATE POLICY "rrd_admin_select" ON registros_reporte_diario
@@ -408,7 +430,14 @@ CREATE POLICY "rrd_admin_select" ON registros_reporte_diario
 
 CREATE POLICY "rrd_admin_update" ON registros_reporte_diario
   FOR UPDATE TO authenticated
-  USING (get_rol() = 'admin' AND inmutable = FALSE);
+  USING (get_rol() = 'admin' AND inmutable = FALSE)
+  WITH CHECK (
+    get_rol() = 'admin'
+    AND (
+      (estado = 'APROBADO')
+      OR inmutable = FALSE
+    )
+  );
 
 CREATE POLICY "rrd_sync_upsert" ON registros_reporte_diario
   FOR ALL TO service_role
