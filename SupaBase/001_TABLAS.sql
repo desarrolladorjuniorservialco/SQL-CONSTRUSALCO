@@ -58,7 +58,8 @@
 --   6.  Registros fotográficos (rf_*)
 --   7.  Formularios geográficos adicionales (PMT)
 --   8.  Auditoría y flujo (historial_estados, cierres, notificaciones)
---   9.  Seguimiento contractual (prórrogas, adiciones)  ← NUEVO
+--   9.  Seguimiento contractual (prórrogas, adiciones)
+--   11. Anotaciones Generales de Bitácora  ← NUEVO
 --
 --   CONVENCIÓN DE NOMBRES
 --   · Todas las tablas y columnas en snake_case minúsculas
@@ -799,3 +800,25 @@ DROP TRIGGER IF EXISTS trg_sync_adiciones ON contratos_adiciones;
 CREATE TRIGGER trg_sync_adiciones
   AFTER INSERT OR UPDATE OR DELETE ON contratos_adiciones
   FOR EACH ROW EXECUTE FUNCTION sync_contrato_adiciones();
+
+
+-- ════════════════════════════════════════════════════════════
+-- 11. ANOTACIONES GENERALES DE BITÁCORA
+--     Registro libre no vinculado a QFieldCloud.
+--     Todos los roles pueden leer; supervisor no puede insertar.
+--     Registro inmutable (sin UPDATE ni DELETE).
+-- ════════════════════════════════════════════════════════════
+
+CREATE TABLE IF NOT EXISTS anotaciones_generales (
+    id               uuid        DEFAULT gen_random_uuid() PRIMARY KEY,
+    fecha            date        NOT NULL,
+    tramo            text,
+    civ              text,
+    pk               text,
+    anotacion        text        NOT NULL CHECK (char_length(anotacion) <= 2000),
+    usuario_id       uuid        NOT NULL REFERENCES auth.users(id),
+    usuario_nombre   text        NOT NULL,
+    usuario_rol      text        NOT NULL,
+    usuario_empresa  text,
+    created_at       timestamptz DEFAULT now()
+);

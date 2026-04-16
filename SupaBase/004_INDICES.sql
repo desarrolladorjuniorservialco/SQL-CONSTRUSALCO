@@ -233,3 +233,12 @@ CREATE INDEX IF NOT EXISTS rf_comp_idx_folio
 
 CREATE INDEX IF NOT EXISTS rf_rd_idx_folio
   ON rf_reporte_diario(folio);
+
+
+-- ════════════════════════════════════════════════════════════
+-- anotaciones_generales  (prefijo ag_)
+-- ════════════════════════════════════════════════════════════
+
+-- Lookup principal: historial ordenado por timestamp (chat view)
+CREATE INDEX IF NOT EXISTS ag_idx_created_at
+  ON anotaciones_generales (created_at ASC);

@@ -728,3 +728,25 @@ CREATE POLICY "bd_service" ON bd_sst_ambiental
 -- dashboard bajo "Project Settings → API → anon public"). Su seguridad
 -- depende del RLS, no de que sea secreta.
 -- ════════════════════════════════════════════════════════════
+
+
+-- ════════════════════════════════════════════════════════════
+-- ANOTACIONES GENERALES DE BITÁCORA
+-- ════════════════════════════════════════════════════════════
+
+ALTER TABLE anotaciones_generales ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "ag_select_authenticated"  ON anotaciones_generales;
+DROP POLICY IF EXISTS "ag_insert_non_supervisor" ON anotaciones_generales;
+
+-- Lectura: cualquier usuario autenticado
+CREATE POLICY "ag_select_authenticated" ON anotaciones_generales
+  FOR SELECT TO authenticated
+  USING (TRUE);
+
+-- Inserción: autenticados con rol distinto de 'supervisor'
+CREATE POLICY "ag_insert_non_supervisor" ON anotaciones_generales
+  FOR INSERT TO authenticated
+  WITH CHECK (get_rol() != 'supervisor');
+
+-- Sin UPDATE ni DELETE: registro inmutable (bitácora)
