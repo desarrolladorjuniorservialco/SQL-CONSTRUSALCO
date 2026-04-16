@@ -2,7 +2,8 @@
 -- MÓDULO 005 · GESTIÓN DE USUARIOS Y ROLES
 -- Contrato IDU-1556-2025 · Grupo 4
 -- Contratista: SERVIALCO S.A.S.
--- Interventoría: IDU
+-- Interventoría: CONSORCIO INTERCONSERVACION
+-- Supervisión: IDU
 --
 -- INSTRUCCIONES DE USO
 -- ─────────────────────────────────────────────────────────────
@@ -13,8 +14,8 @@
 -- PASO 2: Copiar el UUID generado y usarlo en los INSERT
 --   de la sección correspondiente a continuación.
 --
--- PASO 3 (opcional): Si necesitas un rol nuevo, ejecuta
---   primero la sección "AGREGAR ROLES" antes de los INSERT.
+-- PASO 3 (opcional): Si necesitas modificar el CHECK de la tabla
+--   perfiles, ejecuta primero la sección "MODIFICAR CONSTRAINT".
 -- ============================================================
 
 
@@ -22,27 +23,27 @@
 -- A. ROLES DISPONIBLES (referencia rápida)
 -- ════════════════════════════════════════════════════════════
 --
---   inspector    → inspectores de campo, crean registros en QField
---   obra         → personal de obra, igual que inspector
---   residente    → residente de obra, revisa y aprueba (nivel 1)
---   coordinador  → igual que residente
---   interventor  → interventoría IDU, aprueba definitivamente (nivel 2)
---   supervisor   → supervisión IDU, solo lectura
+--   operativo    → inspectores de campo; crean registros en QField
+--                  y anotaciones generales en la plataforma;
+--                  solo ven sus propios registros (RLS por creado_por)
+--   obra         → residentes de obra; revisan y aprueban nivel 1
+--                  (BORRADOR / DEVUELTO → REVISADO)
+--   interventoria→ interventoría IDU; aprueban definitivamente nivel 2
+--                  (REVISADO → APROBADO)
+--   supervision  → supervisión IDU; solo lectura en todos los registros
 --   admin        → administrador total del sistema
 
 
 -- ════════════════════════════════════════════════════════════
--- B. AGREGAR UN ROL NUEVO (ejecutar solo si se necesita)
+-- B. MODIFICAR CONSTRAINT DE ROL (solo si se requiere)
 -- ════════════════════════════════════════════════════════════
--- Descomenta y ajusta si necesitas un rol adicional.
--- Reemplaza 'nuevo_rol' por el nombre deseado (ej: 'laboratorio').
+-- Descomenta si necesitas agregar un rol adicional al sistema.
 
 /*
 ALTER TABLE perfiles DROP CONSTRAINT IF EXISTS perfiles_rol_check;
 ALTER TABLE perfiles ADD CONSTRAINT perfiles_rol_check
   CHECK (rol IN (
-    'inspector','obra','interventor','supervisor','admin',
-    'residente','coordinador',
+    'operativo','obra','interventoria','supervision','admin',
     'nuevo_rol'   -- ← agrega aquí
   ));
 */
@@ -55,14 +56,15 @@ ALTER TABLE perfiles ADD CONSTRAINT perfiles_rol_check
 -- que generó Supabase al crear el usuario en Authentication.
 -- ─────────────────────────────────────────────────────────────
 
--- ── Inspectores de campo (crean registros desde QField) ──────
+-- ── Inspector de campo / operativo ───────────────────────────
+-- Crea registros desde QField y anotaciones en la plataforma.
 
 INSERT INTO perfiles (id, nombre, correo, rol, empresa, contrato, activo)
 VALUES (
   'UUID-COPIADO-DE-AUTH',          -- ← reemplazar
   'Nombre Apellido',
   'inspector@servialco.com',
-  'inspector',
+  'operativo',
   'SERVIALCO S.A.S.',
   'IDU-1556-2025',
   TRUE
@@ -72,6 +74,7 @@ VALUES (
   activo  = EXCLUDED.activo;
 
 -- ── Residente de obra (aprobación nivel 1) ───────────────────
+-- Revisa BORRADOR/DEVUELTO → REVISADO.
 
 /*
 INSERT INTO perfiles (id, nombre, correo, rol, empresa, contrato, activo)
@@ -79,7 +82,7 @@ VALUES (
   'UUID-COPIADO-DE-AUTH',
   'Nombre Apellido',
   'residente@servialco.com',
-  'residente',
+  'obra',
   'SERVIALCO S.A.S.',
   'IDU-1556-2025',
   TRUE
@@ -89,7 +92,8 @@ VALUES (
   activo  = EXCLUDED.activo;
 */
 
--- ── Interventor IDU (aprobación nivel 2) ─────────────────────
+-- ── Interventoría IDU (aprobación nivel 2) ───────────────────
+-- Aprueba definitivamente REVISADO → APROBADO.
 
 /*
 INSERT INTO perfiles (id, nombre, correo, rol, empresa, contrato, activo)
@@ -97,8 +101,8 @@ VALUES (
   'UUID-COPIADO-DE-AUTH',
   'Nombre Apellido',
   'interventor@idu.gov.co',
-  'interventor',
-  'IDU',
+  'interventoria',
+  'CONSORCIO INTERCONSERVACION',
   'IDU-1556-2025',
   TRUE
 ) ON CONFLICT (id) DO UPDATE SET
@@ -107,7 +111,7 @@ VALUES (
   activo  = EXCLUDED.activo;
 */
 
--- ── Supervisor IDU (solo lectura) ────────────────────────────
+-- ── Supervisión IDU (solo lectura) ───────────────────────────
 
 /*
 INSERT INTO perfiles (id, nombre, correo, rol, empresa, contrato, activo)
@@ -115,7 +119,7 @@ VALUES (
   'UUID-COPIADO-DE-AUTH',
   'Nombre Apellido',
   'supervisor@idu.gov.co',
-  'supervisor',
+  'supervision',
   'IDU',
   'IDU-1556-2025',
   TRUE
@@ -161,4 +165,4 @@ ORDER BY rol, nombre;
 -- UPDATE perfiles SET activo = FALSE WHERE correo = 'usuario@ejemplo.com';
 
 -- Cambiar rol de un usuario
--- UPDATE perfiles SET rol = 'residente' WHERE correo = 'usuario@ejemplo.com';
+-- UPDATE perfiles SET rol = 'obra' WHERE correo = 'usuario@ejemplo.com';

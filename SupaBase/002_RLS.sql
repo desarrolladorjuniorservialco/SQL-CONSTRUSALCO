@@ -2,26 +2,26 @@
 -- MÓDULO 002 · ROW LEVEL SECURITY (RLS)
 -- Contrato IDU-1556-2025 · Consorcio Obras Peatonales 2025
 --
---   BUG CRÍTICO CORREGIDO
---   ─────────────────────────────────────────────
---   El módulo original referenciaba una tabla llamada 'registros'
---   que NO EXISTE en el DDL. Las tablas reales son:
---     • registros_cantidades
---     • registros_componentes
---     • registros_reporte_diario
+-- ROLES DEL SISTEMA
+-- ─────────────────────────────────────────────
+--   operativo    → inspectores de campo; crean registros en QField
+--                  y anotaciones generales; ven solo sus propios datos
+--   obra         → residentes de obra; revisan y aprueban nivel 1
+--                  (BORRADOR/DEVUELTO → REVISADO)
+--   interventoria→ interventoría IDU; aprueban definitivamente nivel 2
+--                  (REVISADO → APROBADO)
+--   supervision  → supervisión IDU; solo lectura
+--   admin        → administrador total del sistema
 --
---   Consecuencia del bug: TODO el módulo fallaba en ejecución
---   (error "relation registros does not exist"), por lo que
---   ninguna política de RLS se aplicaba a los formularios
---   principales.
---
---   Corrección: Las políticas se replican para las 3 tablas reales.
---
---   [PATCH-004/005] Agregadas políticas para las nuevas tablas:
---     • contratos_prorrogas
---     • contratos_adiciones
---   Política: todos los autenticados pueden leer; solo admin/service
---   pueden escribir (los datos vienen del Excel vía sync_contrato.py).
+-- HISTORIAL DE CAMBIOS
+-- ─────────────────────────────────────────────
+--   [PATCH-001] Corregido bug: referencia a tabla 'registros' inexistente.
+--              Políticas replicadas para las 3 tablas reales.
+--   [PATCH-004/005] Agregadas políticas para contratos_prorrogas y
+--              contratos_adiciones.
+--   [PATCH-006] Consolidación de roles: inspector/obra/residente/coordinador/
+--              interventor/supervisor → operativo/obra/interventoria/supervision.
+--              Nombres de columnas de BD conservados sin cambios.
 -- ============================================================
 
 
@@ -168,6 +168,8 @@ CREATE POLICY "adi_service" ON contratos_adiciones
 -- ════════════════════════════════════════════════════════════
 
 -- ── registros_cantidades ─────────────────────────────────────
+-- Roles: operativo (campo), obra (nivel 1), interventoria (nivel 2),
+--        supervision (lectura), admin (total)
 
 DROP POLICY IF EXISTS "rc_inspector_insert"     ON registros_cantidades;
 DROP POLICY IF EXISTS "rc_inspector_select"     ON registros_cantidades;
@@ -179,59 +181,69 @@ DROP POLICY IF EXISTS "rc_interventor_update"   ON registros_cantidades;
 DROP POLICY IF EXISTS "rc_admin_select"         ON registros_cantidades;
 DROP POLICY IF EXISTS "rc_admin_update"         ON registros_cantidades;
 DROP POLICY IF EXISTS "rc_sync_upsert"          ON registros_cantidades;
+DROP POLICY IF EXISTS "rc_operativo_insert"     ON registros_cantidades;
+DROP POLICY IF EXISTS "rc_operativo_select"     ON registros_cantidades;
+DROP POLICY IF EXISTS "rc_operativo_update"     ON registros_cantidades;
+DROP POLICY IF EXISTS "rc_obra_select"          ON registros_cantidades;
+DROP POLICY IF EXISTS "rc_obra_update"          ON registros_cantidades;
+DROP POLICY IF EXISTS "rc_interventoria_select" ON registros_cantidades;
+DROP POLICY IF EXISTS "rc_interventoria_update" ON registros_cantidades;
 
-CREATE POLICY "rc_inspector_insert" ON registros_cantidades
+-- operativo: solo ve sus propios registros (RLS por creado_por)
+CREATE POLICY "rc_operativo_insert" ON registros_cantidades
   FOR INSERT TO authenticated
-  WITH CHECK (get_rol() IN ('inspector', 'obra'));
+  WITH CHECK (get_rol() = 'operativo');
 
-CREATE POLICY "rc_inspector_select" ON registros_cantidades
+CREATE POLICY "rc_operativo_select" ON registros_cantidades
   FOR SELECT TO authenticated
-  USING (get_rol() IN ('inspector', 'obra') AND creado_por = auth.uid());
+  USING (get_rol() = 'operativo' AND creado_por = auth.uid());
 
-CREATE POLICY "rc_inspector_update" ON registros_cantidades
+CREATE POLICY "rc_operativo_update" ON registros_cantidades
   FOR UPDATE TO authenticated
   USING (
-    get_rol() IN ('inspector', 'obra')
+    get_rol() = 'operativo'
     AND creado_por = auth.uid()
     AND estado IN ('BORRADOR','DEVUELTO')
     AND inmutable = FALSE
   )
   WITH CHECK (
-    get_rol() IN ('inspector', 'obra')
+    get_rol() = 'operativo'
     AND estado IN ('BORRADOR','DEVUELTO')
     AND inmutable = FALSE
   );
 
-CREATE POLICY "rc_residente_select" ON registros_cantidades
+-- obra (nivel 1): ve todos, aprueba BORRADOR/DEVUELTO → REVISADO
+CREATE POLICY "rc_obra_select" ON registros_cantidades
   FOR SELECT TO authenticated
-  USING (get_rol() IN ('residente', 'coordinador'));
+  USING (get_rol() = 'obra');
 
-CREATE POLICY "rc_residente_update" ON registros_cantidades
+CREATE POLICY "rc_obra_update" ON registros_cantidades
   FOR UPDATE TO authenticated
   USING (
-    get_rol() IN ('residente', 'coordinador')
+    get_rol() = 'obra'
     AND estado IN ('BORRADOR','DEVUELTO')
     AND inmutable = FALSE
   )
   WITH CHECK (
-    get_rol() IN ('residente', 'coordinador')
+    get_rol() = 'obra'
     AND estado IN ('REVISADO','DEVUELTO')
     AND inmutable = FALSE
   );
 
-CREATE POLICY "rc_interventor_select" ON registros_cantidades
+-- interventoria (nivel 2): ve todos, aprueba REVISADO → APROBADO
+CREATE POLICY "rc_interventoria_select" ON registros_cantidades
   FOR SELECT TO authenticated
-  USING (get_rol() IN ('interventor','supervisor'));
+  USING (get_rol() IN ('interventoria','supervision'));
 
-CREATE POLICY "rc_interventor_update" ON registros_cantidades
+CREATE POLICY "rc_interventoria_update" ON registros_cantidades
   FOR UPDATE TO authenticated
   USING (
-    get_rol() = 'interventor'
+    get_rol() = 'interventoria'
     AND estado = 'REVISADO'
     AND inmutable = FALSE
   )
   WITH CHECK (
-    get_rol() = 'interventor'
+    get_rol() = 'interventoria'
     AND (
       -- Al aprobar el trigger tg_inmutable pone inmutable=TRUE antes del WITH CHECK
       (estado = 'APROBADO')
@@ -263,69 +275,76 @@ CREATE POLICY "rc_sync_upsert" ON registros_cantidades
 
 -- ── registros_componentes ────────────────────────────────────
 
-DROP POLICY IF EXISTS "rco_inspector_insert"   ON registros_componentes;
-DROP POLICY IF EXISTS "rco_inspector_select"   ON registros_componentes;
-DROP POLICY IF EXISTS "rco_inspector_update"   ON registros_componentes;
-DROP POLICY IF EXISTS "rco_residente_select"   ON registros_componentes;
-DROP POLICY IF EXISTS "rco_residente_update"   ON registros_componentes;
-DROP POLICY IF EXISTS "rco_interventor_select" ON registros_componentes;
-DROP POLICY IF EXISTS "rco_interventor_update" ON registros_componentes;
-DROP POLICY IF EXISTS "rco_admin_select"       ON registros_componentes;
-DROP POLICY IF EXISTS "rco_admin_update"       ON registros_componentes;
-DROP POLICY IF EXISTS "rco_sync_upsert"        ON registros_componentes;
+DROP POLICY IF EXISTS "rco_inspector_insert"    ON registros_componentes;
+DROP POLICY IF EXISTS "rco_inspector_select"    ON registros_componentes;
+DROP POLICY IF EXISTS "rco_inspector_update"    ON registros_componentes;
+DROP POLICY IF EXISTS "rco_residente_select"    ON registros_componentes;
+DROP POLICY IF EXISTS "rco_residente_update"    ON registros_componentes;
+DROP POLICY IF EXISTS "rco_interventor_select"  ON registros_componentes;
+DROP POLICY IF EXISTS "rco_interventor_update"  ON registros_componentes;
+DROP POLICY IF EXISTS "rco_admin_select"        ON registros_componentes;
+DROP POLICY IF EXISTS "rco_admin_update"        ON registros_componentes;
+DROP POLICY IF EXISTS "rco_sync_upsert"         ON registros_componentes;
+DROP POLICY IF EXISTS "rco_operativo_insert"    ON registros_componentes;
+DROP POLICY IF EXISTS "rco_operativo_select"    ON registros_componentes;
+DROP POLICY IF EXISTS "rco_operativo_update"    ON registros_componentes;
+DROP POLICY IF EXISTS "rco_obra_select"         ON registros_componentes;
+DROP POLICY IF EXISTS "rco_obra_update"         ON registros_componentes;
+DROP POLICY IF EXISTS "rco_interventoria_select" ON registros_componentes;
+DROP POLICY IF EXISTS "rco_interventoria_update" ON registros_componentes;
 
-CREATE POLICY "rco_inspector_insert" ON registros_componentes
+CREATE POLICY "rco_operativo_insert" ON registros_componentes
   FOR INSERT TO authenticated
-  WITH CHECK (get_rol() IN ('inspector', 'obra'));
+  WITH CHECK (get_rol() = 'operativo');
 
-CREATE POLICY "rco_inspector_select" ON registros_componentes
+CREATE POLICY "rco_operativo_select" ON registros_componentes
   FOR SELECT TO authenticated
-  USING (get_rol() IN ('inspector', 'obra') AND creado_por = auth.uid());
+  USING (get_rol() = 'operativo' AND creado_por = auth.uid());
 
-CREATE POLICY "rco_inspector_update" ON registros_componentes
+CREATE POLICY "rco_operativo_update" ON registros_componentes
   FOR UPDATE TO authenticated
   USING (
-    get_rol() IN ('inspector', 'obra')
+    get_rol() = 'operativo'
     AND creado_por = auth.uid()
     AND estado IN ('BORRADOR','DEVUELTO')
     AND inmutable = FALSE
   )
   WITH CHECK (
-    get_rol() IN ('inspector', 'obra')
+    get_rol() = 'operativo'
     AND estado IN ('BORRADOR','DEVUELTO')
     AND inmutable = FALSE
   );
 
-CREATE POLICY "rco_residente_select" ON registros_componentes
+CREATE POLICY "rco_obra_select" ON registros_componentes
   FOR SELECT TO authenticated
-  USING (get_rol() IN ('residente', 'coordinador'));
+  USING (get_rol() = 'obra');
 
-CREATE POLICY "rco_residente_update" ON registros_componentes
+CREATE POLICY "rco_obra_update" ON registros_componentes
   FOR UPDATE TO authenticated
   USING (
-    get_rol() IN ('residente', 'coordinador')
+    get_rol() = 'obra'
     AND estado IN ('BORRADOR','DEVUELTO')
     AND inmutable = FALSE
   )
   WITH CHECK (
-    get_rol() IN ('residente', 'coordinador')
+    get_rol() = 'obra'
     AND estado IN ('REVISADO','DEVUELTO')
     AND inmutable = FALSE
   );
 
-CREATE POLICY "rco_interventor_select" ON registros_componentes
+CREATE POLICY "rco_interventoria_select" ON registros_componentes
   FOR SELECT TO authenticated
-  USING (get_rol() IN ('interventor','supervisor'));
+  USING (get_rol() IN ('interventoria','supervision'));
 
-CREATE POLICY "rco_interventor_update" ON registros_componentes
+CREATE POLICY "rco_interventoria_update" ON registros_componentes
   FOR UPDATE TO authenticated
   USING (
-    get_rol() = 'interventor'
+    get_rol() = 'interventoria'
     AND estado = 'REVISADO'
     AND inmutable = FALSE
   )
   WITH CHECK (
-    get_rol() = 'interventor'
+    get_rol() = 'interventoria'
     AND (
       (estado = 'APROBADO')
       OR (estado = 'DEVUELTO' AND inmutable = FALSE)
@@ -355,69 +374,76 @@ CREATE POLICY "rco_sync_upsert" ON registros_componentes
 
 -- ── registros_reporte_diario ─────────────────────────────────
 
-DROP POLICY IF EXISTS "rrd_inspector_insert"   ON registros_reporte_diario;
-DROP POLICY IF EXISTS "rrd_inspector_select"   ON registros_reporte_diario;
-DROP POLICY IF EXISTS "rrd_inspector_update"   ON registros_reporte_diario;
-DROP POLICY IF EXISTS "rrd_residente_select"   ON registros_reporte_diario;
-DROP POLICY IF EXISTS "rrd_residente_update"   ON registros_reporte_diario;
-DROP POLICY IF EXISTS "rrd_interventor_select" ON registros_reporte_diario;
-DROP POLICY IF EXISTS "rrd_interventor_update" ON registros_reporte_diario;
-DROP POLICY IF EXISTS "rrd_admin_select"       ON registros_reporte_diario;
-DROP POLICY IF EXISTS "rrd_admin_update"       ON registros_reporte_diario;
-DROP POLICY IF EXISTS "rrd_sync_upsert"        ON registros_reporte_diario;
+DROP POLICY IF EXISTS "rrd_inspector_insert"    ON registros_reporte_diario;
+DROP POLICY IF EXISTS "rrd_inspector_select"    ON registros_reporte_diario;
+DROP POLICY IF EXISTS "rrd_inspector_update"    ON registros_reporte_diario;
+DROP POLICY IF EXISTS "rrd_residente_select"    ON registros_reporte_diario;
+DROP POLICY IF EXISTS "rrd_residente_update"    ON registros_reporte_diario;
+DROP POLICY IF EXISTS "rrd_interventor_select"  ON registros_reporte_diario;
+DROP POLICY IF EXISTS "rrd_interventor_update"  ON registros_reporte_diario;
+DROP POLICY IF EXISTS "rrd_admin_select"        ON registros_reporte_diario;
+DROP POLICY IF EXISTS "rrd_admin_update"        ON registros_reporte_diario;
+DROP POLICY IF EXISTS "rrd_sync_upsert"         ON registros_reporte_diario;
+DROP POLICY IF EXISTS "rrd_operativo_insert"    ON registros_reporte_diario;
+DROP POLICY IF EXISTS "rrd_operativo_select"    ON registros_reporte_diario;
+DROP POLICY IF EXISTS "rrd_operativo_update"    ON registros_reporte_diario;
+DROP POLICY IF EXISTS "rrd_obra_select"         ON registros_reporte_diario;
+DROP POLICY IF EXISTS "rrd_obra_update"         ON registros_reporte_diario;
+DROP POLICY IF EXISTS "rrd_interventoria_select" ON registros_reporte_diario;
+DROP POLICY IF EXISTS "rrd_interventoria_update" ON registros_reporte_diario;
 
-CREATE POLICY "rrd_inspector_insert" ON registros_reporte_diario
+CREATE POLICY "rrd_operativo_insert" ON registros_reporte_diario
   FOR INSERT TO authenticated
-  WITH CHECK (get_rol() IN ('inspector', 'obra'));
+  WITH CHECK (get_rol() = 'operativo');
 
-CREATE POLICY "rrd_inspector_select" ON registros_reporte_diario
+CREATE POLICY "rrd_operativo_select" ON registros_reporte_diario
   FOR SELECT TO authenticated
-  USING (get_rol() IN ('inspector', 'obra') AND creado_por = auth.uid());
+  USING (get_rol() = 'operativo' AND creado_por = auth.uid());
 
-CREATE POLICY "rrd_inspector_update" ON registros_reporte_diario
+CREATE POLICY "rrd_operativo_update" ON registros_reporte_diario
   FOR UPDATE TO authenticated
   USING (
-    get_rol() IN ('inspector', 'obra')
+    get_rol() = 'operativo'
     AND creado_por = auth.uid()
     AND estado IN ('BORRADOR','DEVUELTO')
     AND inmutable = FALSE
   )
   WITH CHECK (
-    get_rol() IN ('inspector', 'obra')
+    get_rol() = 'operativo'
     AND estado IN ('BORRADOR','DEVUELTO')
     AND inmutable = FALSE
   );
 
-CREATE POLICY "rrd_residente_select" ON registros_reporte_diario
+CREATE POLICY "rrd_obra_select" ON registros_reporte_diario
   FOR SELECT TO authenticated
-  USING (get_rol() IN ('residente', 'coordinador'));
+  USING (get_rol() = 'obra');
 
-CREATE POLICY "rrd_residente_update" ON registros_reporte_diario
+CREATE POLICY "rrd_obra_update" ON registros_reporte_diario
   FOR UPDATE TO authenticated
   USING (
-    get_rol() IN ('residente', 'coordinador')
+    get_rol() = 'obra'
     AND estado IN ('BORRADOR','DEVUELTO')
     AND inmutable = FALSE
   )
   WITH CHECK (
-    get_rol() IN ('residente', 'coordinador')
+    get_rol() = 'obra'
     AND estado IN ('REVISADO','DEVUELTO')
     AND inmutable = FALSE
   );
 
-CREATE POLICY "rrd_interventor_select" ON registros_reporte_diario
+CREATE POLICY "rrd_interventoria_select" ON registros_reporte_diario
   FOR SELECT TO authenticated
-  USING (get_rol() IN ('interventor','supervisor'));
+  USING (get_rol() IN ('interventoria','supervision'));
 
-CREATE POLICY "rrd_interventor_update" ON registros_reporte_diario
+CREATE POLICY "rrd_interventoria_update" ON registros_reporte_diario
   FOR UPDATE TO authenticated
   USING (
-    get_rol() = 'interventor'
+    get_rol() = 'interventoria'
     AND estado = 'REVISADO'
     AND inmutable = FALSE
   )
   WITH CHECK (
-    get_rol() = 'interventor'
+    get_rol() = 'interventoria'
     AND (
       (estado = 'APROBADO')
       OR (estado = 'DEVUELTO' AND inmutable = FALSE)
@@ -454,11 +480,11 @@ DROP POLICY IF EXISTS "crear_cierres" ON cierres_semanales;
 
 CREATE POLICY "ver_cierres" ON cierres_semanales
   FOR SELECT TO authenticated
-  USING (get_rol() IN ('residente','coordinador','interventor','supervisor','admin'));
+  USING (get_rol() IN ('obra','interventoria','supervision','admin'));
 
 CREATE POLICY "crear_cierres" ON cierres_semanales
   FOR INSERT TO authenticated
-  WITH CHECK (get_rol() IN ('interventor','admin'));
+  WITH CHECK (get_rol() IN ('interventoria','admin'));
 
 
 -- ════════════════════════════════════════════════════════════
@@ -470,11 +496,11 @@ DROP POLICY IF EXISTS "crear_cierre_registros" ON cierre_registros;
 
 CREATE POLICY "ver_cierre_registros" ON cierre_registros
   FOR SELECT TO authenticated
-  USING (get_rol() IN ('residente','coordinador','interventor','supervisor','admin'));
+  USING (get_rol() IN ('obra','interventoria','supervision','admin'));
 
 CREATE POLICY "crear_cierre_registros" ON cierre_registros
   FOR INSERT TO authenticated
-  WITH CHECK (get_rol() IN ('interventor','admin'));
+  WITH CHECK (get_rol() IN ('interventoria','admin'));
 
 
 -- ════════════════════════════════════════════════════════════
@@ -489,15 +515,15 @@ DROP POLICY IF EXISTS "insertar_historial_service"     ON historial_estados;
 
 CREATE POLICY "ver_historial" ON historial_estados
   FOR SELECT TO authenticated
-  USING (get_rol() IN ('residente','coordinador','interventor','supervisor','admin'));
+  USING (get_rol() IN ('obra','interventoria','supervision','admin'));
 
 CREATE POLICY "insertar_historial_residente" ON historial_estados
   FOR INSERT TO authenticated
-  WITH CHECK (get_rol() IN ('residente', 'coordinador'));
+  WITH CHECK (get_rol() = 'obra');
 
 CREATE POLICY "insertar_historial_interventor" ON historial_estados
   FOR INSERT TO authenticated
-  WITH CHECK (get_rol() = 'interventor');
+  WITH CHECK (get_rol() = 'interventoria');
 
 CREATE POLICY "insertar_historial_admin" ON historial_estados
   FOR INSERT TO authenticated
@@ -609,19 +635,19 @@ DROP POLICY IF EXISTS "pmt_service"          ON formulario_pmt;
 
 CREATE POLICY "pmt_inspector_insert" ON formulario_pmt
   FOR INSERT TO authenticated
-  WITH CHECK (get_rol() IN ('inspector', 'obra'));
+  WITH CHECK (get_rol() = 'operativo');
 
 CREATE POLICY "pmt_inspector_select" ON formulario_pmt
   FOR SELECT TO authenticated
-  USING (get_rol() IN ('inspector', 'obra'));
+  USING (get_rol() IN ('operativo', 'obra'));
 
 CREATE POLICY "pmt_residente_select" ON formulario_pmt
   FOR SELECT TO authenticated
-  USING (get_rol() IN ('residente', 'coordinador'));
+  USING (get_rol() = 'obra');
 
 CREATE POLICY "pmt_interventor_select" ON formulario_pmt
   FOR SELECT TO authenticated
-  USING (get_rol() IN ('interventor', 'supervisor'));
+  USING (get_rol() IN ('interventoria', 'supervision'));
 
 CREATE POLICY "pmt_admin_all" ON formulario_pmt
   FOR ALL TO authenticated
