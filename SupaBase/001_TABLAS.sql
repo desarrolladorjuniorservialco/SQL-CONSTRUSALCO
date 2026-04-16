@@ -454,7 +454,7 @@ CREATE TABLE IF NOT EXISTS registros_reporte_diario (
   pk_id                    TEXT,
   cantidad                 NUMERIC(13,2),
   unidad                   TEXT,         
-  tramo_id                 TEXT,  
+  id_tramo                 TEXT,  
  
   -- Localización
   latitud                  DOUBLE PRECISION,
