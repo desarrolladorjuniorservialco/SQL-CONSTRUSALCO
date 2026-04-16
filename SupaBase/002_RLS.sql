@@ -738,15 +738,16 @@ ALTER TABLE anotaciones_generales ENABLE ROW LEVEL SECURITY;
 
 DROP POLICY IF EXISTS "ag_select_authenticated"  ON anotaciones_generales;
 DROP POLICY IF EXISTS "ag_insert_non_supervisor" ON anotaciones_generales;
+DROP POLICY IF EXISTS "ag_insert_authenticated"  ON anotaciones_generales;
 
 -- Lectura: cualquier usuario autenticado
 CREATE POLICY "ag_select_authenticated" ON anotaciones_generales
   FOR SELECT TO authenticated
   USING (TRUE);
 
--- Inserción: autenticados con rol distinto de 'supervisor'
-CREATE POLICY "ag_insert_non_supervisor" ON anotaciones_generales
+-- Inserción: todos los roles autenticados (incluyendo supervisor)
+CREATE POLICY "ag_insert_authenticated" ON anotaciones_generales
   FOR INSERT TO authenticated
-  WITH CHECK (get_rol() != 'supervisor');
+  WITH CHECK (TRUE);
 
 -- Sin UPDATE ni DELETE: registro inmutable (bitácora)
