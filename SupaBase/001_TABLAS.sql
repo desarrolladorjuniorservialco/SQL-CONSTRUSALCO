@@ -821,9 +821,4 @@ CREATE TABLE IF NOT EXISTS anotaciones_generales (
     usuario_rol      text        NOT NULL,
     usuario_empresa  text,
     created_at       timestamptz DEFAULT now()
-
-
-ALTER TABLE anotaciones_generales 
-ALTER COLUMN created_at TYPE timestamp without time zone,
-ALTER COLUMN created_at SET DEFAULT (now() AT TIME ZONE 'America/Bogota');
 );
