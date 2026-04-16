@@ -450,7 +450,12 @@ CREATE TABLE IF NOT EXISTS registros_reporte_diario (
   fecha_creacion           TIMESTAMPTZ DEFAULT NOW(),
   creado_por               UUID REFERENCES perfiles(id),
   usuario_qfield           TEXT,
-
+  civ                      TEXT,
+  pk_id                    TEXT,
+  cantidad                 NUMERIC(13,2),
+  unidad                   TEXT,         
+  tramo_id                 TEXT,  
+ 
   -- Localización
   latitud                  DOUBLE PRECISION,
   longitud                 DOUBLE PRECISION,
