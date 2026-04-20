@@ -777,3 +777,33 @@ CREATE POLICY "ag_insert_authenticated" ON anotaciones_generales
   WITH CHECK (TRUE);
 
 -- Sin UPDATE ni DELETE: registro inmutable (bitácora)
+
+
+-- ════════════════════════════════════════════════════════════
+-- CORRESPONDENCIA
+--   · Todos los roles autenticados leen
+--   · obra, interventoria y admin pueden insertar y actualizar
+--   · service_role tiene acceso total
+-- ════════════════════════════════════════════════════════════
+
+ALTER TABLE correspondencia ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "corresp_select"       ON correspondencia;
+DROP POLICY IF EXISTS "corresp_write"        ON correspondencia;
+DROP POLICY IF EXISTS "corresp_service"      ON correspondencia;
+
+-- Lectura: cualquier usuario autenticado
+CREATE POLICY "corresp_select" ON correspondencia
+  FOR SELECT TO authenticated
+  USING (TRUE);
+
+-- Escritura (INSERT + UPDATE): obra, interventoria y admin
+CREATE POLICY "corresp_write" ON correspondencia
+  FOR ALL TO authenticated
+  USING    (get_rol() IN ('obra', 'interventoria', 'admin'))
+  WITH CHECK (get_rol() IN ('obra', 'interventoria', 'admin'));
+
+-- service_role: acceso total (sincronización y mantenimiento)
+CREATE POLICY "corresp_service" ON correspondencia
+  FOR ALL TO service_role
+  USING (TRUE) WITH CHECK (TRUE);

@@ -826,3 +826,38 @@ CREATE TABLE IF NOT EXISTS anotaciones_generales (
     usuario_empresa  text,
     created_at       timestamptz DEFAULT now()
 );
+
+
+-- ════════════════════════════════════════════════════════════
+-- 12. CORRESPONDENCIA
+--     Seguimiento de comunicaciones del contrato.
+--     Todos los roles de gestión pueden leer y escribir.
+--     Registra última persona que modificó y fecha de modificación.
+-- ════════════════════════════════════════════════════════════
+
+CREATE TABLE IF NOT EXISTS correspondencia (
+  id                    UUID        DEFAULT gen_random_uuid() PRIMARY KEY,
+  contrato_id           TEXT        REFERENCES contratos(id),
+  emisor                TEXT        NOT NULL,
+  receptor              TEXT        NOT NULL,
+  consecutivo           TEXT        NOT NULL,
+  fecha                 DATE        NOT NULL,
+  componente            TEXT,
+  asunto                TEXT        NOT NULL,
+  plazo_respuesta       DATE,
+  estado                TEXT        NOT NULL DEFAULT 'PENDIENTE'
+                          CHECK (estado IN ('PENDIENTE', 'RESPONDIDO', 'NO APLICA RESPUESTA')),
+  consecutivo_respuesta TEXT,
+  fecha_respuesta       DATE,
+  link                  TEXT,
+  creado_por            UUID        REFERENCES perfiles(id),
+  creado_en             TIMESTAMPTZ DEFAULT NOW(),
+  modificado_por        UUID        REFERENCES perfiles(id),
+  modificado_en         TIMESTAMPTZ,
+  modificado_por_nombre TEXT
+);
+
+COMMENT ON TABLE  correspondencia                        IS 'Seguimiento de correspondencia del contrato IDU-1556-2025.';
+COMMENT ON COLUMN correspondencia.consecutivo            IS 'Número consecutivo del documento de correspondencia.';
+COMMENT ON COLUMN correspondencia.plazo_respuesta        IS 'Fecha límite para dar respuesta. Filas en PENDIENTE sin respuesta y con esta fecha vencida se resaltan en amarillo.';
+COMMENT ON COLUMN correspondencia.modificado_por_nombre  IS 'Nombre de la persona que realizó la última modificación (desnormalizado para auditoría rápida).';
