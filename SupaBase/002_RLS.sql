@@ -797,11 +797,11 @@ CREATE POLICY "corresp_select" ON correspondencia
   FOR SELECT TO authenticated
   USING (TRUE);
 
--- Escritura (INSERT + UPDATE): obra, interventoria y admin
+-- Escritura (INSERT + UPDATE): obra y admin
 CREATE POLICY "corresp_write" ON correspondencia
   FOR ALL TO authenticated
-  USING    (get_rol() IN ('obra', 'interventoria', 'admin'))
-  WITH CHECK (get_rol() IN ('obra', 'interventoria', 'admin'));
+  USING    (get_rol() IN ('obra', 'admin'))
+  WITH CHECK (get_rol() IN ('obra', 'admin'));
 
 -- service_role: acceso total (sincronización y mantenimiento)
 CREATE POLICY "corresp_service" ON correspondencia
