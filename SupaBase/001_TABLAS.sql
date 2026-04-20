@@ -441,9 +441,11 @@ CREATE TABLE IF NOT EXISTS registros_componentes (
 );
 
 -- 4.3 Reporte Diario  (Reporte_Diario)
+-- [PATCH-006] folio es NOT NULL pero NO UNIQUE: el GPKG puede tener varios
+-- ítems (pk_id/civ) por sesión diaria (folio). id_unico es la clave de upsert.
 CREATE TABLE IF NOT EXISTS registros_reporte_diario (
   id                       UUID DEFAULT gen_random_uuid() PRIMARY KEY,
-  folio                    TEXT UNIQUE NOT NULL,
+  folio                    TEXT NOT NULL,
   id_unico                 TEXT UNIQUE,
   contrato_id              TEXT REFERENCES contratos(id),
   fecha_creacion           TIMESTAMPTZ DEFAULT NOW(),
@@ -492,13 +494,15 @@ CREATE TABLE IF NOT EXISTS registros_reporte_diario (
 -- 5. TABLAS SECUNDARIAS DEL REPORTE DIARIO
 --    Fuente: BD_PersonalObra.gpkg · BD_CondicionClimatica.gpkg
 --            BD_MaquinariaObra.gpkg · BD_SST-Ambiental.gpkg
---    Relación: [tabla].folio → registros_reporte_diario.folio
+--    Relación: [tabla].folio (texto) — sin FK porque registros_reporte_diario
+--    ya no tiene UNIQUE en folio ([PATCH-006]). El sync reconstruye bd_*
+--    completo en cada ciclo (delete_all + insert).
 -- ════════════════════════════════════════════════════════════
 
 -- 5.1 Personal de obra  (BD_PersonalObra)
 CREATE TABLE IF NOT EXISTS bd_personal_obra (
   id                  UUID DEFAULT gen_random_uuid() PRIMARY KEY,
-  folio               TEXT NOT NULL REFERENCES registros_reporte_diario(folio) ON DELETE CASCADE,
+  folio               TEXT NOT NULL,
   inspectores         NUMERIC(12,3),
   personal_operativo  NUMERIC(12,3),
   personal_boal       NUMERIC(12,3),
@@ -510,7 +514,7 @@ CREATE TABLE IF NOT EXISTS bd_personal_obra (
 -- 5.2 Condición climática  (BD_CondicionClimatica)
 CREATE TABLE IF NOT EXISTS bd_condicion_climatica (
   id            UUID DEFAULT gen_random_uuid() PRIMARY KEY,
-  folio         TEXT NOT NULL REFERENCES registros_reporte_diario(folio) ON DELETE CASCADE,
+  folio         TEXT NOT NULL,
   estado_clima  TEXT,
   hora          TIME,
   observaciones TEXT,
@@ -521,7 +525,7 @@ CREATE TABLE IF NOT EXISTS bd_condicion_climatica (
 -- 5.3 Maquinaria en obra  (BD_MaquinariaObra)
 CREATE TABLE IF NOT EXISTS bd_maquinaria_obra (
   id                     UUID DEFAULT gen_random_uuid() PRIMARY KEY,
-  folio                  TEXT NOT NULL REFERENCES registros_reporte_diario(folio) ON DELETE CASCADE,
+  folio                  TEXT NOT NULL,
   operarios              NUMERIC(12,3),
   volquetas              NUMERIC(12,3),
   vibrocompactador       NUMERIC(12,3),
@@ -540,7 +544,7 @@ CREATE TABLE IF NOT EXISTS bd_maquinaria_obra (
 -- 5.4 SST – Ambiental  (BD_SST-Ambiental)
 CREATE TABLE IF NOT EXISTS bd_sst_ambiental (
   id                 UUID DEFAULT gen_random_uuid() PRIMARY KEY,
-  folio              TEXT NOT NULL REFERENCES registros_reporte_diario(folio) ON DELETE CASCADE,
+  folio              TEXT NOT NULL,
   observaciones      TEXT,
   longitud           DOUBLE PRECISION,
   latitud            DOUBLE PRECISION,
