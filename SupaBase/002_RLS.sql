@@ -586,9 +586,22 @@ CREATE POLICY "ref_select" ON tramos_aux_tramos
 CREATE POLICY "ref_service" ON tramos_aux_tramos
   FOR ALL TO service_role USING (TRUE) WITH CHECK (TRUE);
 
-CREATE POLICY "ref_select" ON tramos_bd
+-- tramos_bd: todos leen; solo obra y admin actualizan ejecutado
+DROP POLICY IF EXISTS "ref_select"       ON tramos_bd;
+DROP POLICY IF EXISTS "ref_service"      ON tramos_bd;
+DROP POLICY IF EXISTS "tbd_select"       ON tramos_bd;
+DROP POLICY IF EXISTS "tbd_obra_update"  ON tramos_bd;
+DROP POLICY IF EXISTS "tbd_service"      ON tramos_bd;
+
+CREATE POLICY "tbd_select" ON tramos_bd
   FOR SELECT TO authenticated USING (TRUE);
-CREATE POLICY "ref_service" ON tramos_bd
+
+CREATE POLICY "tbd_obra_update" ON tramos_bd
+  FOR UPDATE TO authenticated
+  USING    (get_rol() IN ('obra', 'admin'))
+  WITH CHECK (get_rol() IN ('obra', 'admin'));
+
+CREATE POLICY "tbd_service" ON tramos_bd
   FOR ALL TO service_role USING (TRUE) WITH CHECK (TRUE);
 
 CREATE POLICY "ref_select" ON presupuesto_aux_actividad
@@ -807,3 +820,27 @@ CREATE POLICY "corresp_write" ON correspondencia
 CREATE POLICY "corresp_service" ON correspondencia
   FOR ALL TO service_role
   USING (TRUE) WITH CHECK (TRUE);
+
+
+-- ════════════════════════════════════════════════════════════
+-- TRAMOS_BD_HISTORIAL
+--   · Todos los roles autenticados leen (auditoría visible)
+--   · Solo obra y admin insertan (inmutable: sin UPDATE/DELETE)
+--   · service_role: acceso total
+-- ════════════════════════════════════════════════════════════
+
+ALTER TABLE tramos_bd_historial ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "tbdh_select"       ON tramos_bd_historial;
+DROP POLICY IF EXISTS "tbdh_obra_insert"  ON tramos_bd_historial;
+DROP POLICY IF EXISTS "tbdh_service"      ON tramos_bd_historial;
+
+CREATE POLICY "tbdh_select" ON tramos_bd_historial
+  FOR SELECT TO authenticated USING (TRUE);
+
+CREATE POLICY "tbdh_obra_insert" ON tramos_bd_historial
+  FOR INSERT TO authenticated
+  WITH CHECK (get_rol() IN ('obra', 'admin'));
+
+CREATE POLICY "tbdh_service" ON tramos_bd_historial
+  FOR ALL TO service_role USING (TRUE) WITH CHECK (TRUE);

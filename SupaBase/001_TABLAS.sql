@@ -230,8 +230,35 @@ CREATE TABLE IF NOT EXISTS tramos_bd (
   infraestructura   TEXT REFERENCES tramos_aux_infra(codigo),
   observaciones     TEXT,
   cicloruta_km      NUMERIC(10,4),
-  esp_publico_m2    NUMERIC(14,4)
+  esp_publico_m2    NUMERIC(14,4),
+  -- Meta física consolidada: unidad y valor según tipo de infraestructura.
+  -- CI → cicloruta_km (km) | EP → esp_publico_m2 (m²) | MV → metros lineales (ml)
+  meta_fisica       NUMERIC(14,4),
+  und               TEXT,
+  -- Avance físico real ingresado manualmente por rol obra
+  ejecutado         NUMERIC(14,4) DEFAULT 0
 );
+
+-- Agregar columnas si la tabla ya existía sin ellas
+ALTER TABLE tramos_bd
+  ADD COLUMN IF NOT EXISTS meta_fisica NUMERIC(14,4),
+  ADD COLUMN IF NOT EXISTS und         TEXT,
+  ADD COLUMN IF NOT EXISTS ejecutado   NUMERIC(14,4) DEFAULT 0;
+
+-- Rellenar meta_fisica / und desde las columnas originales según infraestructura
+UPDATE tramos_bd SET
+  meta_fisica = cicloruta_km,
+  und         = 'km'
+WHERE infraestructura = 'CI'
+  AND cicloruta_km IS NOT NULL
+  AND meta_fisica  IS NULL;
+
+UPDATE tramos_bd SET
+  meta_fisica = esp_publico_m2,
+  und         = 'm²'
+WHERE infraestructura = 'EP'
+  AND esp_publico_m2 IS NOT NULL
+  AND meta_fisica    IS NULL;
 
 
 -- ════════════════════════════════════════════════════════════
@@ -865,3 +892,28 @@ COMMENT ON TABLE  correspondencia                        IS 'Seguimiento de corr
 COMMENT ON COLUMN correspondencia.consecutivo            IS 'Número consecutivo del documento de correspondencia.';
 COMMENT ON COLUMN correspondencia.plazo_respuesta        IS 'Fecha límite para dar respuesta. Filas en PENDIENTE sin respuesta y con esta fecha vencida se resaltan en amarillo.';
 COMMENT ON COLUMN correspondencia.modificado_por_nombre  IS 'Nombre de la persona que realizó la última modificación (desnormalizado para auditoría rápida).';
+
+
+-- ════════════════════════════════════════════════════════════
+-- 13. HISTORIAL DE EJECUCIÓN DE META FÍSICA
+--     Auditoría de cada cambio al campo tramos_bd.ejecutado.
+--     Solo el rol obra puede insertar; todos los roles leen.
+--     Registro inmutable (sin UPDATE ni DELETE desde la app).
+--     modificado_en se almacena en UTC; la app muestra UTC-5.
+-- ════════════════════════════════════════════════════════════
+
+CREATE TABLE IF NOT EXISTS tramos_bd_historial (
+  id                UUID        DEFAULT gen_random_uuid() PRIMARY KEY,
+  id_tramo          TEXT        NOT NULL REFERENCES tramos_bd(id_tramo) ON DELETE CASCADE,
+  ejecutado_ant     NUMERIC(14,4),
+  ejecutado_nuevo   NUMERIC(14,4) NOT NULL,
+  modificado_por    UUID        NOT NULL REFERENCES perfiles(id),
+  modificado_nombre TEXT        NOT NULL,
+  modificado_en     TIMESTAMPTZ DEFAULT NOW()
+);
+
+COMMENT ON TABLE  tramos_bd_historial                    IS 'Auditoría de cambios al avance físico (ejecutado) por tramo.';
+COMMENT ON COLUMN tramos_bd_historial.ejecutado_ant      IS 'Valor de ejecutado antes del cambio (NULL en el primer registro).';
+COMMENT ON COLUMN tramos_bd_historial.ejecutado_nuevo    IS 'Nuevo valor de ejecutado registrado por el rol obra.';
+COMMENT ON COLUMN tramos_bd_historial.modificado_nombre  IS 'Nombre del usuario desnormalizado para consulta rápida sin JOIN.';
+COMMENT ON COLUMN tramos_bd_historial.modificado_en      IS 'Timestamp UTC del momento del cambio; la app convierte a UTC-5 para visualización.';
