@@ -787,11 +787,36 @@ CREATE POLICY "ag_select_authenticated" ON anotaciones_generales
   USING (TRUE);
 
 -- Inserción: todos los roles autenticados (incluyendo supervisor)
+-- WITH CHECK (TRUE) es seguro porque el trigger tg_ag_identity (BEFORE INSERT)
+-- sobreescribe los campos de identidad con los valores reales del perfil.
 CREATE POLICY "ag_insert_authenticated" ON anotaciones_generales
   FOR INSERT TO authenticated
   WITH CHECK (TRUE);
 
 -- Sin UPDATE ni DELETE: registro inmutable (bitácora)
+
+
+-- ── Trigger de identidad: evita suplantación en anotaciones ──────────────
+-- Sobreescribe usuario_nombre, usuario_rol y usuario_empresa con los valores
+-- reales del perfil del usuario autenticado, ignorando lo que la app envíe.
+
+CREATE OR REPLACE FUNCTION enforce_anotacion_identity()
+RETURNS TRIGGER AS $$
+DECLARE
+  p perfiles%ROWTYPE;
+BEGIN
+  SELECT * INTO p FROM perfiles WHERE id = auth.uid();
+  NEW.usuario_nombre  := p.nombre;
+  NEW.usuario_rol     := p.rol;
+  NEW.usuario_empresa := p.empresa;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public;
+
+DROP TRIGGER IF EXISTS tg_ag_identity ON anotaciones_generales;
+CREATE TRIGGER tg_ag_identity
+  BEFORE INSERT ON anotaciones_generales
+  FOR EACH ROW EXECUTE FUNCTION enforce_anotacion_identity();
 
 
 -- ════════════════════════════════════════════════════════════
