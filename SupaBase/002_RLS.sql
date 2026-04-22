@@ -76,10 +76,15 @@ CREATE POLICY "usuario_inserta_perfil" ON perfiles
 
 -- El usuario puede actualizar solo sus campos de presentación (nombre, empresa).
 -- NO puede cambiar su propio rol ni contrato (eso es exclusivo del admin).
+-- [SECURITY] WITH CHECK compara el nuevo valor de 'rol' contra get_rol() (valor actual
+-- vía SECURITY DEFINER) para bloquear escalada de privilegios por auto-update.
 CREATE POLICY "usuario_actualiza_su_perfil" ON perfiles
   FOR UPDATE TO authenticated
   USING (id = auth.uid())
-  WITH CHECK (id = auth.uid());
+  WITH CHECK (
+    id = auth.uid()
+    AND rol = get_rol()
+  );
 
 CREATE POLICY "admin_gestiona_perfiles" ON perfiles
   FOR ALL TO authenticated
@@ -639,24 +644,21 @@ CREATE POLICY "ref_service" ON presupuesto_componentes_aux
 
 ALTER TABLE formulario_pmt ENABLE ROW LEVEL SECURITY;
 
-DROP POLICY IF EXISTS "pmt_inspector_insert" ON formulario_pmt;
-DROP POLICY IF EXISTS "pmt_inspector_select" ON formulario_pmt;
-DROP POLICY IF EXISTS "pmt_residente_select" ON formulario_pmt;
+DROP POLICY IF EXISTS "pmt_inspector_insert"  ON formulario_pmt;
+DROP POLICY IF EXISTS "pmt_inspector_select"  ON formulario_pmt;
+DROP POLICY IF EXISTS "pmt_residente_select"  ON formulario_pmt;
 DROP POLICY IF EXISTS "pmt_interventor_select" ON formulario_pmt;
-DROP POLICY IF EXISTS "pmt_admin_all"        ON formulario_pmt;
-DROP POLICY IF EXISTS "pmt_service"          ON formulario_pmt;
+DROP POLICY IF EXISTS "pmt_admin_all"         ON formulario_pmt;
+DROP POLICY IF EXISTS "pmt_service"           ON formulario_pmt;
 
 CREATE POLICY "pmt_inspector_insert" ON formulario_pmt
   FOR INSERT TO authenticated
   WITH CHECK (get_rol() = 'operativo');
 
+-- [FIX] Eliminada pmt_residente_select (duplicada: 'obra' ya estaba cubierta aquí).
 CREATE POLICY "pmt_inspector_select" ON formulario_pmt
   FOR SELECT TO authenticated
   USING (get_rol() IN ('operativo', 'obra'));
-
-CREATE POLICY "pmt_residente_select" ON formulario_pmt
-  FOR SELECT TO authenticated
-  USING (get_rol() = 'obra');
 
 CREATE POLICY "pmt_interventor_select" ON formulario_pmt
   FOR SELECT TO authenticated
@@ -801,18 +803,25 @@ CREATE POLICY "ag_insert_authenticated" ON anotaciones_generales
 
 ALTER TABLE correspondencia ENABLE ROW LEVEL SECURITY;
 
-DROP POLICY IF EXISTS "corresp_select"       ON correspondencia;
-DROP POLICY IF EXISTS "corresp_write"        ON correspondencia;
-DROP POLICY IF EXISTS "corresp_service"      ON correspondencia;
+DROP POLICY IF EXISTS "corresp_select"        ON correspondencia;
+DROP POLICY IF EXISTS "corresp_write"         ON correspondencia;
+DROP POLICY IF EXISTS "corresp_insert"        ON correspondencia;
+DROP POLICY IF EXISTS "corresp_update"        ON correspondencia;
+DROP POLICY IF EXISTS "corresp_service"       ON correspondencia;
 
 -- Lectura: cualquier usuario autenticado
 CREATE POLICY "corresp_select" ON correspondencia
   FOR SELECT TO authenticated
   USING (TRUE);
 
--- Escritura (INSERT + UPDATE): obra y admin
-CREATE POLICY "corresp_write" ON correspondencia
-  FOR ALL TO authenticated
+-- [SECURITY] Separado en INSERT y UPDATE explícitos para excluir DELETE.
+-- FOR ALL previo permitía que 'obra' borrara registros de correspondencia.
+CREATE POLICY "corresp_insert" ON correspondencia
+  FOR INSERT TO authenticated
+  WITH CHECK (get_rol() IN ('obra', 'admin'));
+
+CREATE POLICY "corresp_update" ON correspondencia
+  FOR UPDATE TO authenticated
   USING    (get_rol() IN ('obra', 'admin'))
   WITH CHECK (get_rol() IN ('obra', 'admin'));
 
