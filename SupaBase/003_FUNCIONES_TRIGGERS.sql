@@ -180,7 +180,7 @@ BEGIN
     tipo_notif,
     asunto_notif
   FROM perfiles
-  WHERE contrato = NEW.contrato_id
+  WHERE contrato_id = NEW.contrato_id
     AND activo   = TRUE;
 
   RETURN NEW;
