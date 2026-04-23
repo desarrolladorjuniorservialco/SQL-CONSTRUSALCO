@@ -1,9 +1,5 @@
 -- ============================================================
 -- MÓDULO 005 · GESTIÓN DE USUARIOS Y ROLES
--- Contrato IDU-1556-2025 · Grupo 4
--- Contratista: SERVIALCO S.A.S.
--- Interventoría: CONSORCIO INTERCONSERVACION
--- Supervisión: IDU
 --
 -- INSTRUCCIONES DE USO
 -- ─────────────────────────────────────────────────────────────
@@ -11,11 +7,10 @@
 --   Dashboard → Authentication → Users → "Add user"
 --   Ingresa correo y contraseña. Supabase genera un UUID.
 --
--- PASO 2: Copiar el UUID generado y usarlo en los INSERT
---   de la sección correspondiente a continuación.
+-- PASO 2: Copiar el UUID generado y reemplazar 'UUID-COPIADO-DE-AUTH'.
 --
--- PASO 3 (opcional): Si necesitas modificar el CHECK de la tabla
---   perfiles, ejecuta primero la sección "MODIFICAR CONSTRAINT".
+-- PASO 3: Ajusta contrato_id al ID real del contrato al que pertenece
+--   el usuario (debe existir en la tabla contratos).
 -- ============================================================
 
 
@@ -24,11 +19,10 @@
 -- ════════════════════════════════════════════════════════════
 --
 --   operativo    → inspectores de campo; crean registros en QField
---                  y anotaciones generales en la plataforma;
---                  solo ven sus propios registros (RLS por creado_por)
+--                  y anotaciones generales en la plataforma
 --   obra         → residentes de obra; revisan y aprueban nivel 1
 --                  (BORRADOR / DEVUELTO → REVISADO)
---   interventoria→ interventoría IDU; aprueban definitivamente nivel 2
+--   interventoria→ interventoría; aprueban definitivamente nivel 2
 --                  (REVISADO → APROBADO)
 --   supervision  → supervisión IDU; solo lectura en todos los registros
 --   admin        → administrador total del sistema
@@ -37,7 +31,6 @@
 -- ════════════════════════════════════════════════════════════
 -- B. MODIFICAR CONSTRAINT DE ROL (solo si se requiere)
 -- ════════════════════════════════════════════════════════════
--- Descomenta si necesitas agregar un rol adicional al sistema.
 
 /*
 ALTER TABLE perfiles DROP CONSTRAINT IF EXISTS perfiles_rol_check;
@@ -52,21 +45,20 @@ ALTER TABLE perfiles ADD CONSTRAINT perfiles_rol_check
 -- ════════════════════════════════════════════════════════════
 -- C. CREAR USUARIOS
 -- ════════════════════════════════════════════════════════════
--- Reemplaza cada 'UUID-COPIADO-DE-AUTH' por el UUID real
--- que generó Supabase al crear el usuario en Authentication.
+-- Reemplaza 'UUID-COPIADO-DE-AUTH' por el UUID real de Supabase Auth.
+-- Reemplaza 'ID-DEL-CONTRATO' por el id del contrato (ej. 'IDU-1556-2025').
 -- ─────────────────────────────────────────────────────────────
 
 -- ── Inspector de campo / operativo ───────────────────────────
--- Crea registros desde QField y anotaciones en la plataforma.
 
-INSERT INTO perfiles (id, nombre, correo, rol, empresa, contrato, activo)
+INSERT INTO perfiles (id, nombre, correo, rol, empresa, contrato_id, activo)
 VALUES (
   'UUID-COPIADO-DE-AUTH',          -- ← reemplazar
   'Nombre Apellido',
-  'inspector@servialco.com',
+  'inspector@empresa.com',
   'operativo',
-  'SERVIALCO S.A.S.',
-  'IDU-1556-2025',
+  'Nombre Empresa',
+  'ID-DEL-CONTRATO',               -- ← reemplazar, ej. 'IDU-1556-2025'
   TRUE
 ) ON CONFLICT (id) DO UPDATE SET
   nombre  = EXCLUDED.nombre,
@@ -74,17 +66,16 @@ VALUES (
   activo  = EXCLUDED.activo;
 
 -- ── Residente de obra (aprobación nivel 1) ───────────────────
--- Revisa BORRADOR/DEVUELTO → REVISADO.
 
 /*
-INSERT INTO perfiles (id, nombre, correo, rol, empresa, contrato, activo)
+INSERT INTO perfiles (id, nombre, correo, rol, empresa, contrato_id, activo)
 VALUES (
   'UUID-COPIADO-DE-AUTH',
   'Nombre Apellido',
-  'residente@servialco.com',
+  'residente@empresa.com',
   'obra',
-  'SERVIALCO S.A.S.',
-  'IDU-1556-2025',
+  'Nombre Empresa',
+  'ID-DEL-CONTRATO',
   TRUE
 ) ON CONFLICT (id) DO UPDATE SET
   nombre  = EXCLUDED.nombre,
@@ -92,18 +83,17 @@ VALUES (
   activo  = EXCLUDED.activo;
 */
 
--- ── Interventoría IDU (aprobación nivel 2) ───────────────────
--- Aprueba definitivamente REVISADO → APROBADO.
+-- ── Interventoría (aprobación nivel 2) ───────────────────────
 
 /*
-INSERT INTO perfiles (id, nombre, correo, rol, empresa, contrato, activo)
+INSERT INTO perfiles (id, nombre, correo, rol, empresa, contrato_id, activo)
 VALUES (
   'UUID-COPIADO-DE-AUTH',
   'Nombre Apellido',
-  'interventor@idu.gov.co',
+  'interventor@empresa.com',
   'interventoria',
-  'CONSORCIO INTERCONSERVACION',
-  'IDU-1556-2025',
+  'Nombre Interventoría',
+  'ID-DEL-CONTRATO',
   TRUE
 ) ON CONFLICT (id) DO UPDATE SET
   nombre  = EXCLUDED.nombre,
@@ -111,17 +101,17 @@ VALUES (
   activo  = EXCLUDED.activo;
 */
 
--- ── Supervisión IDU (solo lectura) ───────────────────────────
+-- ── Supervisión (solo lectura) ────────────────────────────────
 
 /*
-INSERT INTO perfiles (id, nombre, correo, rol, empresa, contrato, activo)
+INSERT INTO perfiles (id, nombre, correo, rol, empresa, contrato_id, activo)
 VALUES (
   'UUID-COPIADO-DE-AUTH',
   'Nombre Apellido',
-  'supervisor@idu.gov.co',
+  'supervisor@entidad.gov.co',
   'supervision',
-  'IDU',
-  'IDU-1556-2025',
+  'Entidad Supervisora',
+  'ID-DEL-CONTRATO',
   TRUE
 ) ON CONFLICT (id) DO UPDATE SET
   nombre  = EXCLUDED.nombre,
@@ -132,14 +122,14 @@ VALUES (
 -- ── Administrador del sistema ─────────────────────────────────
 
 /*
-INSERT INTO perfiles (id, nombre, correo, rol, empresa, contrato, activo)
+INSERT INTO perfiles (id, nombre, correo, rol, empresa, contrato_id, activo)
 VALUES (
   'UUID-COPIADO-DE-AUTH',
   'Nombre Apellido',
-  'admin@servialco.com',
+  'admin@empresa.com',
   'admin',
-  'SERVIALCO S.A.S.',
-  'IDU-1556-2025',
+  'Nombre Empresa',
+  'ID-DEL-CONTRATO',
   TRUE
 ) ON CONFLICT (id) DO UPDATE SET
   nombre  = EXCLUDED.nombre,
@@ -152,14 +142,17 @@ VALUES (
 -- D. CONSULTAS DE VERIFICACIÓN
 -- ════════════════════════════════════════════════════════════
 
--- Ver todos los usuarios activos del contrato
-SELECT id, nombre, correo, rol, empresa, activo, creado_en
+-- Ver todos los usuarios activos de un contrato
+SELECT id, nombre, correo, rol, empresa, contrato_id, activo, creado_en
 FROM perfiles
-WHERE contrato = 'IDU-1556-2025'
+WHERE contrato_id = 'ID-DEL-CONTRATO'   -- ← reemplazar
 ORDER BY rol, nombre;
 
--- Ver usuarios por rol
--- SELECT rol, COUNT(*) AS total FROM perfiles GROUP BY rol ORDER BY rol;
+-- Ver usuarios por rol en todos los contratos
+-- SELECT contrato_id, rol, COUNT(*) AS total
+-- FROM perfiles
+-- GROUP BY contrato_id, rol
+-- ORDER BY contrato_id, rol;
 
 -- Desactivar un usuario sin eliminarlo
 -- UPDATE perfiles SET activo = FALSE WHERE correo = 'usuario@ejemplo.com';
