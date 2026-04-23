@@ -92,39 +92,11 @@
 
 -- ════════════════════════════════════════════════════════════
 -- 1. PERFILES Y CONTRATOS
+--    ORDEN OBLIGATORIO: contratos primero — perfiles tiene FK a contratos.
 -- ════════════════════════════════════════════════════════════
 
-CREATE TABLE IF NOT EXISTS perfiles (
-  id          UUID REFERENCES auth.users(id) ON DELETE CASCADE PRIMARY KEY,
-  nombre      TEXT NOT NULL,
-  correo      TEXT NOT NULL,
-  rol         TEXT NOT NULL CHECK (rol IN (
-                'operativo','obra','interventoria','supervision','admin'
-              )),
-  empresa     TEXT NOT NULL,
-  contrato_id TEXT NOT NULL REFERENCES contratos(id),  -- tenant discriminator
-  activo      BOOLEAN DEFAULT TRUE,
-  creado_en   TIMESTAMPTZ DEFAULT NOW()
-);
-
--- Idempotente: renombrar columna si ya existe con nombre viejo
-DO $$
-BEGIN
-  IF EXISTS (
-    SELECT 1 FROM information_schema.columns
-     WHERE table_name = 'perfiles' AND column_name = 'contrato'
-  ) AND NOT EXISTS (
-    SELECT 1 FROM information_schema.columns
-     WHERE table_name = 'perfiles' AND column_name = 'contrato_id'
-  ) THEN
-    ALTER TABLE perfiles RENAME COLUMN contrato TO contrato_id;
-  END IF;
-END $$;
-
--- Eliminar DEFAULT hardcodeado si aún existe
-ALTER TABLE perfiles ALTER COLUMN contrato_id DROP DEFAULT;
-
 -- ── [PATCH-001/002] Tabla contratos con todas las columnas ───────────
+-- Debe crearse ANTES que perfiles porque perfiles.contrato_id la referencia.
 CREATE TABLE IF NOT EXISTS contratos (
   id             TEXT PRIMARY KEY,
   nombre         TEXT NOT NULL,
@@ -207,6 +179,38 @@ ON CONFLICT (id) DO UPDATE SET
   plazo_actual   = EXCLUDED.plazo_actual,
   valor_actual   = EXCLUDED.valor_actual;
   -- prorrogas y adiciones NO se tocan aquí: los mantiene el trigger.
+
+
+-- ── Tabla perfiles (después de contratos por la FK) ──────────────────
+CREATE TABLE IF NOT EXISTS perfiles (
+  id          UUID REFERENCES auth.users(id) ON DELETE CASCADE PRIMARY KEY,
+  nombre      TEXT NOT NULL,
+  correo      TEXT NOT NULL,
+  rol         TEXT NOT NULL CHECK (rol IN (
+                'operativo','obra','interventoria','supervision','admin'
+              )),
+  empresa     TEXT NOT NULL,
+  contrato_id TEXT NOT NULL REFERENCES contratos(id),  -- tenant discriminator
+  activo      BOOLEAN DEFAULT TRUE,
+  creado_en   TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- Idempotente: renombrar columna si ya existe con nombre viejo
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns
+     WHERE table_name = 'perfiles' AND column_name = 'contrato'
+  ) AND NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+     WHERE table_name = 'perfiles' AND column_name = 'contrato_id'
+  ) THEN
+    ALTER TABLE perfiles RENAME COLUMN contrato TO contrato_id;
+  END IF;
+END $$;
+
+-- Eliminar DEFAULT hardcodeado si aún existe
+ALTER TABLE perfiles ALTER COLUMN contrato_id DROP DEFAULT;
 
 
 -- ════════════════════════════════════════════════════════════
