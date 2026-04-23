@@ -1,5 +1,11 @@
 -- ============================================================
 -- MÓDULO 001 · TABLAS (DDL)
+-- Arquitectura multitenant — un proyecto Supabase por empresa,
+-- múltiples contratos por proyecto.
+-- Discriminador de tenant: contrato_id (FK a contratos.id)
+-- presente en TODAS las tablas de datos y catálogos.
+--
+-- Referencia histórica del primer contrato:
 -- Contrato IDU-1556-2025 · Consorcio Obras Peatonales 2025
 -- Contratista  : URBACON SAS
 -- Interventoría: CONSORCIO INTERCONSERVACION
@@ -89,17 +95,34 @@
 -- ════════════════════════════════════════════════════════════
 
 CREATE TABLE IF NOT EXISTS perfiles (
-  id        UUID REFERENCES auth.users(id) ON DELETE CASCADE PRIMARY KEY,
-  nombre    TEXT NOT NULL,
-  correo    TEXT NOT NULL,
-  rol       TEXT NOT NULL CHECK (rol IN (
-              'operativo','obra','interventoria','supervision','admin'
-            )),
-  empresa   TEXT NOT NULL,
-  contrato  TEXT NOT NULL DEFAULT 'IDU-1556-2025',
-  activo    BOOLEAN DEFAULT TRUE,
-  creado_en TIMESTAMPTZ DEFAULT NOW()
+  id          UUID REFERENCES auth.users(id) ON DELETE CASCADE PRIMARY KEY,
+  nombre      TEXT NOT NULL,
+  correo      TEXT NOT NULL,
+  rol         TEXT NOT NULL CHECK (rol IN (
+                'operativo','obra','interventoria','supervision','admin'
+              )),
+  empresa     TEXT NOT NULL,
+  contrato_id TEXT NOT NULL REFERENCES contratos(id),  -- tenant discriminator
+  activo      BOOLEAN DEFAULT TRUE,
+  creado_en   TIMESTAMPTZ DEFAULT NOW()
 );
+
+-- Idempotente: renombrar columna si ya existe con nombre viejo
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns
+     WHERE table_name = 'perfiles' AND column_name = 'contrato'
+  ) AND NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+     WHERE table_name = 'perfiles' AND column_name = 'contrato_id'
+  ) THEN
+    ALTER TABLE perfiles RENAME COLUMN contrato TO contrato_id;
+  END IF;
+END $$;
+
+-- Eliminar DEFAULT hardcodeado si aún existe
+ALTER TABLE perfiles ALTER COLUMN contrato_id DROP DEFAULT;
 
 -- ── [PATCH-001/002] Tabla contratos con todas las columnas ───────────
 CREATE TABLE IF NOT EXISTS contratos (
@@ -193,41 +216,52 @@ ON CONFLICT (id) DO UPDATE SET
 
 -- 2.1 Localidades  (loca · Loca)
 CREATE TABLE IF NOT EXISTS localidades (
-  id         SERIAL PRIMARY KEY,
-  loc_codigo TEXT UNIQUE,
-  loc_nombre TEXT NOT NULL,
-  loc_admin  TEXT,
-  loc_area   NUMERIC(18,4)
+  id          SERIAL PRIMARY KEY,
+  contrato_id TEXT NOT NULL REFERENCES contratos(id),
+  loc_codigo  TEXT,
+  loc_nombre  TEXT NOT NULL,
+  loc_admin   TEXT,
+  loc_area    NUMERIC(18,4),
+  UNIQUE (contrato_id, loc_codigo)
 );
+ALTER TABLE localidades
+  ADD COLUMN IF NOT EXISTS contrato_id TEXT REFERENCES contratos(id);
 
 -- 2.2 Catálogo de tipos de infraestructura  (TramosIDU15562025AUXINFRA)
---     Valores: EP=Espacio Público, CI=Ciclorruta, MV=Malla Vial
+--     Valores típicos: EP=Espacio Público, CI=Ciclorruta, MV=Malla Vial
+--     PK compuesta (contrato_id, codigo): el mismo código puede existir
+--     en distintos contratos. FK desde tramos_bd eliminada (patrón sin FK).
 CREATE TABLE IF NOT EXISTS tramos_aux_infra (
-  codigo TEXT PRIMARY KEY,
-  nombre TEXT NOT NULL
+  contrato_id TEXT NOT NULL REFERENCES contratos(id),
+  codigo      TEXT NOT NULL,
+  nombre      TEXT NOT NULL,
+  PRIMARY KEY (contrato_id, codigo)
 );
-
-INSERT INTO tramos_aux_infra (codigo, nombre) VALUES
-  ('EP', 'Espacio Público'),
-  ('CI', 'Ciclorruta'),
-  ('MV', 'Malla Vial')
-ON CONFLICT (codigo) DO UPDATE SET nombre = EXCLUDED.nombre;
+ALTER TABLE tramos_aux_infra
+  ADD COLUMN IF NOT EXISTS contrato_id TEXT REFERENCES contratos(id);
 
 -- 2.3 Catálogo de tramos  (TramosIDU15562025AUXTRAMOS)
+--     PK compuesta: el mismo código de tramo puede existir en distintos contratos.
 CREATE TABLE IF NOT EXISTS tramos_aux_tramos (
-  codigo      TEXT PRIMARY KEY,
-  descripcion TEXT NOT NULL
+  contrato_id TEXT NOT NULL REFERENCES contratos(id),
+  codigo      TEXT NOT NULL,
+  descripcion TEXT NOT NULL,
+  PRIMARY KEY (contrato_id, codigo)
 );
+ALTER TABLE tramos_aux_tramos
+  ADD COLUMN IF NOT EXISTS contrato_id TEXT REFERENCES contratos(id);
 
 -- 2.4 Base de datos de tramos  (TramosIDU15562025BDTRAMOS)
+--     infraestructura: texto sin FK (patrón sin FK para evitar 23503 en sync).
 CREATE TABLE IF NOT EXISTS tramos_bd (
   id_tramo          TEXT PRIMARY KEY,
+  contrato_id       TEXT NOT NULL REFERENCES contratos(id),
   tramo_descripcion TEXT,
   via_principal     TEXT,
   via_desde         TEXT,
   via_hasta         TEXT,
   localidad         TEXT,
-  infraestructura   TEXT REFERENCES tramos_aux_infra(codigo),
+  infraestructura   TEXT,        -- sin FK: referencia lógica a tramos_aux_infra.codigo
   observaciones     TEXT,
   cicloruta_km      NUMERIC(10,4),
   esp_publico_m2    NUMERIC(14,4),
@@ -236,8 +270,11 @@ CREATE TABLE IF NOT EXISTS tramos_bd (
   meta_fisica       NUMERIC(14,4),
   und               TEXT,
   -- Avance físico real ingresado manualmente por rol obra
-  ejecutado         NUMERIC(14,4) DEFAULT 0
+  ejecutado         NUMERIC(14,4) DEFAULT 0,
+  UNIQUE (contrato_id, id_tramo)
 );
+ALTER TABLE tramos_bd
+  ADD COLUMN IF NOT EXISTS contrato_id TEXT REFERENCES contratos(id);
 
 -- Agregar columnas si la tabla ya existía sin ellas
 ALTER TABLE tramos_bd
@@ -267,62 +304,79 @@ WHERE infraestructura = 'EP'
 -- ════════════════════════════════════════════════════════════
 
 -- 3.1 Catálogo de tipos de actividad
+--     PK compuesta (contrato_id, tipo_actividad): los mismos tipos de
+--     actividad se repiten entre contratos. FKs eliminadas (patrón sin FK).
 CREATE TABLE IF NOT EXISTS presupuesto_aux_actividad (
-  tipo_actividad TEXT PRIMARY KEY
+  contrato_id    TEXT NOT NULL REFERENCES contratos(id),
+  tipo_actividad TEXT NOT NULL,
+  PRIMARY KEY (contrato_id, tipo_actividad)
 );
-
-INSERT INTO presupuesto_aux_actividad (tipo_actividad) VALUES
-  ('MANTENIMIENTO'),
-  ('REHABILITACION'),
-  ('CONSTRUCCION'),
-  ('MEJORAMIENTO')
-ON CONFLICT (tipo_actividad) DO NOTHING;
+ALTER TABLE presupuesto_aux_actividad
+  ADD COLUMN IF NOT EXISTS contrato_id TEXT REFERENCES contratos(id);
 
 -- 3.2 Catálogo de capítulos
+--     tipo_actividad: texto sin FK (PK de presupuesto_aux_actividad cambió).
 CREATE TABLE IF NOT EXISTS presupuesto_aux_capitulos (
   id             SERIAL PRIMARY KEY,
-  tipo_actividad TEXT REFERENCES presupuesto_aux_actividad(tipo_actividad),
+  contrato_id    TEXT NOT NULL REFERENCES contratos(id),
+  tipo_actividad TEXT,            -- sin FK: referencia lógica a presupuesto_aux_actividad
   capitulo_num   TEXT,
   capitulo       TEXT,
-  UNIQUE (tipo_actividad, capitulo_num)
+  UNIQUE (contrato_id, tipo_actividad, capitulo_num)
 );
+ALTER TABLE presupuesto_aux_capitulos
+  ADD COLUMN IF NOT EXISTS contrato_id TEXT REFERENCES contratos(id);
 
 -- 3.3 Presupuesto de obras  (PresupuestoIDU15562025BDPRESUPUESTO)
+--     tipo_actividad: texto sin FK (PK de presupuesto_aux_actividad cambió).
+--     codigo_idu: único por contrato (no global).
 CREATE TABLE IF NOT EXISTS presupuesto_bd (
   id             SERIAL PRIMARY KEY,
-  tipo_actividad TEXT REFERENCES presupuesto_aux_actividad(tipo_actividad),
+  contrato_id    TEXT NOT NULL REFERENCES contratos(id),
+  tipo_actividad TEXT,            -- sin FK
   capitulo_num   TEXT,
   capitulo       TEXT,
-  codigo_idu     TEXT UNIQUE,
+  codigo_idu     TEXT,
   item_pago      TEXT,
   descripcion    TEXT,
   unidad         TEXT,
-  cantidad_ppto  NUMERIC(16,4)
+  cantidad_ppto  NUMERIC(16,4),
+  UNIQUE (contrato_id, codigo_idu)
 );
+ALTER TABLE presupuesto_bd
+  ADD COLUMN IF NOT EXISTS contrato_id TEXT REFERENCES contratos(id);
 
 -- 3.4 Presupuesto de componentes  (Presupuesto_Componentes · ppto_componentes)
+--     codigo_idu: único por contrato (no global).
 CREATE TABLE IF NOT EXISTS presupuesto_componentes_bd (
   id              SERIAL PRIMARY KEY,
+  contrato_id     TEXT NOT NULL REFERENCES contratos(id),
   capitulo_num    TEXT,
   capitulo        TEXT,
   componente      TEXT,
   tipo_actividad  TEXT,
-  codigo_idu      TEXT UNIQUE,
+  codigo_idu      TEXT,
   descripcion     TEXT,
   unidad          TEXT,
   cantidad_ppto   NUMERIC(16,4),
   precio_unitario NUMERIC(18,4),
-  item_pago       TEXT
+  item_pago       TEXT,
+  UNIQUE (contrato_id, codigo_idu)
 );
+ALTER TABLE presupuesto_componentes_bd
+  ADD COLUMN IF NOT EXISTS contrato_id TEXT REFERENCES contratos(id);
 
 -- 3.5 Auxiliar de componentes
 CREATE TABLE IF NOT EXISTS presupuesto_componentes_aux (
   id             SERIAL PRIMARY KEY,
+  contrato_id    TEXT NOT NULL REFERENCES contratos(id),
   codigo_idu     TEXT,
   componente     TEXT,
   tipo_actividad TEXT,
   capitulo       TEXT
 );
+ALTER TABLE presupuesto_componentes_aux
+  ADD COLUMN IF NOT EXISTS contrato_id TEXT REFERENCES contratos(id);
 
 
 -- ════════════════════════════════════════════════════════════
@@ -529,6 +583,7 @@ CREATE TABLE IF NOT EXISTS registros_reporte_diario (
 -- 5.1 Personal de obra  (BD_PersonalObra)
 CREATE TABLE IF NOT EXISTS bd_personal_obra (
   id                  UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  contrato_id         TEXT REFERENCES contratos(id),
   folio               TEXT NOT NULL,
   inspectores         NUMERIC(12,3),
   personal_operativo  NUMERIC(12,3),
@@ -537,10 +592,13 @@ CREATE TABLE IF NOT EXISTS bd_personal_obra (
   longitud            DOUBLE PRECISION,
   latitud             DOUBLE PRECISION
 );
+ALTER TABLE bd_personal_obra
+  ADD COLUMN IF NOT EXISTS contrato_id TEXT REFERENCES contratos(id);
 
 -- 5.2 Condición climática  (BD_CondicionClimatica)
 CREATE TABLE IF NOT EXISTS bd_condicion_climatica (
   id            UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  contrato_id   TEXT REFERENCES contratos(id),
   folio         TEXT NOT NULL,
   estado_clima  TEXT,
   hora          TIME,
@@ -548,10 +606,13 @@ CREATE TABLE IF NOT EXISTS bd_condicion_climatica (
   longitud      DOUBLE PRECISION,
   latitud       DOUBLE PRECISION
 );
+ALTER TABLE bd_condicion_climatica
+  ADD COLUMN IF NOT EXISTS contrato_id TEXT REFERENCES contratos(id);
 
 -- 5.3 Maquinaria en obra  (BD_MaquinariaObra)
 CREATE TABLE IF NOT EXISTS bd_maquinaria_obra (
   id                     UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  contrato_id            TEXT REFERENCES contratos(id),
   folio                  TEXT NOT NULL,
   operarios              NUMERIC(12,3),
   volquetas              NUMERIC(12,3),
@@ -567,10 +628,13 @@ CREATE TABLE IF NOT EXISTS bd_maquinaria_obra (
   longitud               DOUBLE PRECISION,
   latitud                DOUBLE PRECISION
 );
+ALTER TABLE bd_maquinaria_obra
+  ADD COLUMN IF NOT EXISTS contrato_id TEXT REFERENCES contratos(id);
 
 -- 5.4 SST – Ambiental  (BD_SST-Ambiental)
 CREATE TABLE IF NOT EXISTS bd_sst_ambiental (
   id                 UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  contrato_id        TEXT REFERENCES contratos(id),
   folio              TEXT NOT NULL,
   observaciones      TEXT,
   longitud           DOUBLE PRECISION,
@@ -581,6 +645,8 @@ CREATE TABLE IF NOT EXISTS bd_sst_ambiental (
   punto_ecologico    NUMERIC(12,3),
   extintor           NUMERIC(12,3)
 );
+ALTER TABLE bd_sst_ambiental
+  ADD COLUMN IF NOT EXISTS contrato_id TEXT REFERENCES contratos(id);
 
 
 -- ════════════════════════════════════════════════════════════
@@ -596,6 +662,7 @@ CREATE TABLE IF NOT EXISTS bd_sst_ambiental (
 -- 6.1 Fotos de cantidades  (RF_Cantidades)
 CREATE TABLE IF NOT EXISTS rf_cantidades (
   id                UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  contrato_id       TEXT REFERENCES contratos(id),
   folio             TEXT,
   id_unico          TEXT NOT NULL,
   observacion       TEXT,
@@ -603,26 +670,34 @@ CREATE TABLE IF NOT EXISTS rf_cantidades (
   ruta_destino_foto TEXT,
   foto_url          TEXT
 );
+ALTER TABLE rf_cantidades
+  ADD COLUMN IF NOT EXISTS contrato_id TEXT REFERENCES contratos(id);
 
 -- 6.2 Fotos de componentes  (RF_Componentes)
 CREATE TABLE IF NOT EXISTS rf_componentes (
   id            UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  contrato_id   TEXT REFERENCES contratos(id),
   folio         TEXT,
   id_unico      TEXT NOT NULL,
   observaciones TEXT,
   foto          TEXT,
   foto_url      TEXT
 );
+ALTER TABLE rf_componentes
+  ADD COLUMN IF NOT EXISTS contrato_id TEXT REFERENCES contratos(id);
 
 -- 6.3 Fotos de reporte diario  (RF_ReporteDiario)
 CREATE TABLE IF NOT EXISTS rf_reporte_diario (
   id            UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  contrato_id   TEXT REFERENCES contratos(id),
   folio         TEXT,
   id_unico      TEXT NOT NULL,
   observaciones TEXT,
   foto          TEXT,
   foto_url      TEXT
 );
+ALTER TABLE rf_reporte_diario
+  ADD COLUMN IF NOT EXISTS contrato_id TEXT REFERENCES contratos(id);
 
 
 -- ════════════════════════════════════════════════════════════
@@ -655,6 +730,7 @@ CREATE TABLE IF NOT EXISTS formulario_pmt (
 -- 8.1 Historial de estados (genérico para cantidades, componentes y reporte)
 CREATE TABLE IF NOT EXISTS historial_estados (
   id              UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  contrato_id     TEXT REFERENCES contratos(id),
   registro_id     UUID,
   tabla_origen    TEXT DEFAULT 'registros_cantidades'
                   CHECK (tabla_origen IN (
@@ -669,6 +745,8 @@ CREATE TABLE IF NOT EXISTS historial_estados (
   observacion     TEXT,
   ip              TEXT
 );
+ALTER TABLE historial_estados
+  ADD COLUMN IF NOT EXISTS contrato_id TEXT REFERENCES contratos(id);
 
 -- Idempotente: si la tabla ya existía, eliminar FK y agregar tabla_origen
 ALTER TABLE historial_estados
@@ -711,6 +789,7 @@ CREATE TABLE IF NOT EXISTS cierre_registros (
 -- 8.4 Notificaciones (genérico — registro_id sin FK)
 CREATE TABLE IF NOT EXISTS notificaciones (
   id           UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  contrato_id  TEXT REFERENCES contratos(id),
   registro_id  UUID,
   tabla_origen TEXT DEFAULT 'registros_cantidades'
                CHECK (tabla_origen IN (
@@ -726,6 +805,8 @@ CREATE TABLE IF NOT EXISTS notificaciones (
   enviado_en   TIMESTAMPTZ,
   creado_en    TIMESTAMPTZ DEFAULT NOW()
 );
+ALTER TABLE notificaciones
+  ADD COLUMN IF NOT EXISTS contrato_id TEXT REFERENCES contratos(id);
 
 -- Idempotente: si la tabla ya existía, eliminar FK y agregar tabla_origen
 ALTER TABLE notificaciones
@@ -846,6 +927,7 @@ CREATE TRIGGER trg_sync_adiciones
 
 CREATE TABLE IF NOT EXISTS anotaciones_generales (
     id               uuid        DEFAULT gen_random_uuid() PRIMARY KEY,
+    contrato_id      text        NOT NULL REFERENCES contratos(id),
     fecha            date        NOT NULL,
     tramo            text,
     civ              text,
@@ -857,6 +939,8 @@ CREATE TABLE IF NOT EXISTS anotaciones_generales (
     usuario_empresa  text,
     created_at       timestamptz DEFAULT now()
 );
+ALTER TABLE anotaciones_generales
+  ADD COLUMN IF NOT EXISTS contrato_id TEXT REFERENCES contratos(id);
 
 
 -- ════════════════════════════════════════════════════════════
@@ -904,6 +988,7 @@ COMMENT ON COLUMN correspondencia.modificado_por_nombre  IS 'Nombre de la person
 
 CREATE TABLE IF NOT EXISTS tramos_bd_historial (
   id                UUID        DEFAULT gen_random_uuid() PRIMARY KEY,
+  contrato_id       TEXT        REFERENCES contratos(id),
   id_tramo          TEXT        NOT NULL REFERENCES tramos_bd(id_tramo) ON DELETE CASCADE,
   ejecutado_ant     NUMERIC(14,4),
   ejecutado_nuevo   NUMERIC(14,4) NOT NULL,
@@ -911,6 +996,8 @@ CREATE TABLE IF NOT EXISTS tramos_bd_historial (
   modificado_nombre TEXT        NOT NULL,
   modificado_en     TIMESTAMPTZ DEFAULT NOW()
 );
+ALTER TABLE tramos_bd_historial
+  ADD COLUMN IF NOT EXISTS contrato_id TEXT REFERENCES contratos(id);
 
 COMMENT ON TABLE  tramos_bd_historial                    IS 'Auditoría de cambios al avance físico (ejecutado) por tramo.';
 COMMENT ON COLUMN tramos_bd_historial.ejecutado_ant      IS 'Valor de ejecutado antes del cambio (NULL en el primer registro).';

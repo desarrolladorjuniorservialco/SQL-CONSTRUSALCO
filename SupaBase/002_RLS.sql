@@ -1,6 +1,8 @@
 -- ============================================================
 -- MÓDULO 002 · ROW LEVEL SECURITY (RLS)
--- Contrato IDU-1556-2025 · Consorcio Obras Peatonales 2025
+-- Arquitectura multitenant — discriminador: contrato_id
+-- Patrón de aislamiento: USING (contrato_id = get_contrato_id())
+-- en todas las tablas con datos de tenant.
 --
 -- ROLES DEL SISTEMA
 -- ─────────────────────────────────────────────
@@ -43,12 +45,20 @@ ALTER TABLE notificaciones           ENABLE ROW LEVEL SECURITY;
 
 
 -- ════════════════════════════════════════════════════════════
--- FUNCIÓN AUXILIAR: rol del usuario autenticado
+-- FUNCIONES AUXILIARES
 -- ════════════════════════════════════════════════════════════
 
+-- Rol del usuario autenticado
 CREATE OR REPLACE FUNCTION get_rol()
 RETURNS TEXT AS $$
   SELECT rol FROM perfiles WHERE id = auth.uid();
+$$ LANGUAGE SQL SECURITY DEFINER SET search_path = public;
+
+-- Contrato del usuario autenticado (tenant discriminator)
+-- Usada en EVERY tabla con contrato_id para aislar datos entre contratos.
+CREATE OR REPLACE FUNCTION get_contrato_id()
+RETURNS TEXT AS $$
+  SELECT contrato_id FROM perfiles WHERE id = auth.uid();
 $$ LANGUAGE SQL SECURITY DEFINER SET search_path = public;
 
 
@@ -99,9 +109,10 @@ CREATE POLICY "admin_gestiona_perfiles" ON perfiles
 DROP POLICY IF EXISTS "todos_leen_contratos"    ON contratos;
 DROP POLICY IF EXISTS "admin_escribe_contratos" ON contratos;
 
+-- Cada usuario solo ve el contrato al que pertenece.
 CREATE POLICY "todos_leen_contratos" ON contratos
   FOR SELECT TO authenticated
-  USING (TRUE);
+  USING (id = get_contrato_id());
 
 -- Solo admin o service_role pueden modificar datos del contrato
 CREATE POLICY "admin_escribe_contratos" ON contratos
@@ -128,7 +139,7 @@ DROP POLICY IF EXISTS "pro_service"       ON contratos_prorrogas;
 
 CREATE POLICY "pro_select" ON contratos_prorrogas
   FOR SELECT TO authenticated
-  USING (TRUE);
+  USING (contrato_id = get_contrato_id());
 
 CREATE POLICY "pro_admin_write" ON contratos_prorrogas
   FOR ALL TO authenticated
@@ -151,7 +162,7 @@ DROP POLICY IF EXISTS "adi_service"       ON contratos_adiciones;
 
 CREATE POLICY "adi_select" ON contratos_adiciones
   FOR SELECT TO authenticated
-  USING (TRUE);
+  USING (contrato_id = get_contrato_id());
 
 CREATE POLICY "adi_admin_write" ON contratos_adiciones
   FOR ALL TO authenticated
@@ -201,13 +212,18 @@ CREATE POLICY "rc_operativo_insert" ON registros_cantidades
 
 CREATE POLICY "rc_operativo_select" ON registros_cantidades
   FOR SELECT TO authenticated
-  USING (get_rol() = 'operativo' AND creado_por = auth.uid());
+  USING (
+    get_rol() = 'operativo'
+    AND creado_por = auth.uid()
+    AND contrato_id = get_contrato_id()
+  );
 
 CREATE POLICY "rc_operativo_update" ON registros_cantidades
   FOR UPDATE TO authenticated
   USING (
     get_rol() = 'operativo'
     AND creado_por = auth.uid()
+    AND contrato_id = get_contrato_id()
     AND estado IN ('BORRADOR','DEVUELTO')
     AND inmutable = FALSE
   )
@@ -220,12 +236,13 @@ CREATE POLICY "rc_operativo_update" ON registros_cantidades
 -- obra (nivel 1): ve todos, aprueba BORRADOR/DEVUELTO → REVISADO
 CREATE POLICY "rc_obra_select" ON registros_cantidades
   FOR SELECT TO authenticated
-  USING (get_rol() = 'obra');
+  USING (get_rol() = 'obra' AND contrato_id = get_contrato_id());
 
 CREATE POLICY "rc_obra_update" ON registros_cantidades
   FOR UPDATE TO authenticated
   USING (
     get_rol() = 'obra'
+    AND contrato_id = get_contrato_id()
     AND estado IN ('BORRADOR','DEVUELTO')
     AND inmutable = FALSE
   )
@@ -238,12 +255,13 @@ CREATE POLICY "rc_obra_update" ON registros_cantidades
 -- interventoria (nivel 2): ve todos, aprueba REVISADO → APROBADO
 CREATE POLICY "rc_interventoria_select" ON registros_cantidades
   FOR SELECT TO authenticated
-  USING (get_rol() IN ('interventoria','supervision'));
+  USING (get_rol() IN ('interventoria','supervision') AND contrato_id = get_contrato_id());
 
 CREATE POLICY "rc_interventoria_update" ON registros_cantidades
   FOR UPDATE TO authenticated
   USING (
     get_rol() = 'interventoria'
+    AND contrato_id = get_contrato_id()
     AND estado = 'REVISADO'
     AND inmutable = FALSE
   )
@@ -258,11 +276,11 @@ CREATE POLICY "rc_interventoria_update" ON registros_cantidades
 
 CREATE POLICY "rc_admin_select" ON registros_cantidades
   FOR SELECT TO authenticated
-  USING (get_rol() = 'admin');
+  USING (get_rol() = 'admin' AND contrato_id = get_contrato_id());
 
 CREATE POLICY "rc_admin_update" ON registros_cantidades
   FOR UPDATE TO authenticated
-  USING (get_rol() = 'admin' AND inmutable = FALSE)
+  USING (get_rol() = 'admin' AND contrato_id = get_contrato_id() AND inmutable = FALSE)
   WITH CHECK (
     get_rol() = 'admin'
     AND (
@@ -304,13 +322,18 @@ CREATE POLICY "rco_operativo_insert" ON registros_componentes
 
 CREATE POLICY "rco_operativo_select" ON registros_componentes
   FOR SELECT TO authenticated
-  USING (get_rol() = 'operativo' AND creado_por = auth.uid());
+  USING (
+    get_rol() = 'operativo'
+    AND creado_por = auth.uid()
+    AND contrato_id = get_contrato_id()
+  );
 
 CREATE POLICY "rco_operativo_update" ON registros_componentes
   FOR UPDATE TO authenticated
   USING (
     get_rol() = 'operativo'
     AND creado_por = auth.uid()
+    AND contrato_id = get_contrato_id()
     AND estado IN ('BORRADOR','DEVUELTO')
     AND inmutable = FALSE
   )
@@ -322,12 +345,13 @@ CREATE POLICY "rco_operativo_update" ON registros_componentes
 
 CREATE POLICY "rco_obra_select" ON registros_componentes
   FOR SELECT TO authenticated
-  USING (get_rol() = 'obra');
+  USING (get_rol() = 'obra' AND contrato_id = get_contrato_id());
 
 CREATE POLICY "rco_obra_update" ON registros_componentes
   FOR UPDATE TO authenticated
   USING (
     get_rol() = 'obra'
+    AND contrato_id = get_contrato_id()
     AND estado IN ('BORRADOR','DEVUELTO')
     AND inmutable = FALSE
   )
@@ -339,12 +363,13 @@ CREATE POLICY "rco_obra_update" ON registros_componentes
 
 CREATE POLICY "rco_interventoria_select" ON registros_componentes
   FOR SELECT TO authenticated
-  USING (get_rol() IN ('interventoria','supervision'));
+  USING (get_rol() IN ('interventoria','supervision') AND contrato_id = get_contrato_id());
 
 CREATE POLICY "rco_interventoria_update" ON registros_componentes
   FOR UPDATE TO authenticated
   USING (
     get_rol() = 'interventoria'
+    AND contrato_id = get_contrato_id()
     AND estado = 'REVISADO'
     AND inmutable = FALSE
   )
@@ -358,11 +383,11 @@ CREATE POLICY "rco_interventoria_update" ON registros_componentes
 
 CREATE POLICY "rco_admin_select" ON registros_componentes
   FOR SELECT TO authenticated
-  USING (get_rol() = 'admin');
+  USING (get_rol() = 'admin' AND contrato_id = get_contrato_id());
 
 CREATE POLICY "rco_admin_update" ON registros_componentes
   FOR UPDATE TO authenticated
-  USING (get_rol() = 'admin' AND inmutable = FALSE)
+  USING (get_rol() = 'admin' AND contrato_id = get_contrato_id() AND inmutable = FALSE)
   WITH CHECK (
     get_rol() = 'admin'
     AND (
@@ -403,13 +428,18 @@ CREATE POLICY "rrd_operativo_insert" ON registros_reporte_diario
 
 CREATE POLICY "rrd_operativo_select" ON registros_reporte_diario
   FOR SELECT TO authenticated
-  USING (get_rol() = 'operativo' AND creado_por = auth.uid());
+  USING (
+    get_rol() = 'operativo'
+    AND creado_por = auth.uid()
+    AND contrato_id = get_contrato_id()
+  );
 
 CREATE POLICY "rrd_operativo_update" ON registros_reporte_diario
   FOR UPDATE TO authenticated
   USING (
     get_rol() = 'operativo'
     AND creado_por = auth.uid()
+    AND contrato_id = get_contrato_id()
     AND estado IN ('BORRADOR','DEVUELTO')
     AND inmutable = FALSE
   )
@@ -421,12 +451,13 @@ CREATE POLICY "rrd_operativo_update" ON registros_reporte_diario
 
 CREATE POLICY "rrd_obra_select" ON registros_reporte_diario
   FOR SELECT TO authenticated
-  USING (get_rol() = 'obra');
+  USING (get_rol() = 'obra' AND contrato_id = get_contrato_id());
 
 CREATE POLICY "rrd_obra_update" ON registros_reporte_diario
   FOR UPDATE TO authenticated
   USING (
     get_rol() = 'obra'
+    AND contrato_id = get_contrato_id()
     AND estado IN ('BORRADOR','DEVUELTO')
     AND inmutable = FALSE
   )
@@ -438,12 +469,13 @@ CREATE POLICY "rrd_obra_update" ON registros_reporte_diario
 
 CREATE POLICY "rrd_interventoria_select" ON registros_reporte_diario
   FOR SELECT TO authenticated
-  USING (get_rol() IN ('interventoria','supervision'));
+  USING (get_rol() IN ('interventoria','supervision') AND contrato_id = get_contrato_id());
 
 CREATE POLICY "rrd_interventoria_update" ON registros_reporte_diario
   FOR UPDATE TO authenticated
   USING (
     get_rol() = 'interventoria'
+    AND contrato_id = get_contrato_id()
     AND estado = 'REVISADO'
     AND inmutable = FALSE
   )
@@ -457,11 +489,11 @@ CREATE POLICY "rrd_interventoria_update" ON registros_reporte_diario
 
 CREATE POLICY "rrd_admin_select" ON registros_reporte_diario
   FOR SELECT TO authenticated
-  USING (get_rol() = 'admin');
+  USING (get_rol() = 'admin' AND contrato_id = get_contrato_id());
 
 CREATE POLICY "rrd_admin_update" ON registros_reporte_diario
   FOR UPDATE TO authenticated
-  USING (get_rol() = 'admin' AND inmutable = FALSE)
+  USING (get_rol() = 'admin' AND contrato_id = get_contrato_id() AND inmutable = FALSE)
   WITH CHECK (
     get_rol() = 'admin'
     AND (
@@ -485,7 +517,10 @@ DROP POLICY IF EXISTS "crear_cierres" ON cierres_semanales;
 
 CREATE POLICY "ver_cierres" ON cierres_semanales
   FOR SELECT TO authenticated
-  USING (get_rol() IN ('obra','interventoria','supervision','admin'));
+  USING (
+    get_rol() IN ('obra','interventoria','supervision','admin')
+    AND contrato_id = get_contrato_id()
+  );
 
 CREATE POLICY "crear_cierres" ON cierres_semanales
   FOR INSERT TO authenticated
@@ -520,7 +555,10 @@ DROP POLICY IF EXISTS "insertar_historial_service"     ON historial_estados;
 
 CREATE POLICY "ver_historial" ON historial_estados
   FOR SELECT TO authenticated
-  USING (get_rol() IN ('obra','interventoria','supervision','admin'));
+  USING (
+    get_rol() IN ('obra','interventoria','supervision','admin')
+    AND contrato_id = get_contrato_id()
+  );
 
 CREATE POLICY "insertar_historial_residente" ON historial_estados
   FOR INSERT TO authenticated
@@ -549,7 +587,7 @@ DROP POLICY IF EXISTS "service_notificaciones" ON notificaciones;
 
 CREATE POLICY "ver_notificaciones" ON notificaciones
   FOR SELECT TO authenticated
-  USING (destinatario = auth.uid());
+  USING (destinatario = auth.uid() AND contrato_id = get_contrato_id());
 
 CREATE POLICY "service_notificaciones" ON notificaciones
   FOR ALL TO service_role
@@ -577,17 +615,17 @@ ALTER TABLE presupuesto_bd             ENABLE ROW LEVEL SECURITY;
 ALTER TABLE presupuesto_componentes_bd ENABLE ROW LEVEL SECURITY;
 
 CREATE POLICY "ref_select" ON localidades
-  FOR SELECT TO authenticated USING (TRUE);
+  FOR SELECT TO authenticated USING (contrato_id = get_contrato_id());
 CREATE POLICY "ref_service" ON localidades
   FOR ALL TO service_role USING (TRUE) WITH CHECK (TRUE);
 
 CREATE POLICY "ref_select" ON tramos_aux_infra
-  FOR SELECT TO authenticated USING (TRUE);
+  FOR SELECT TO authenticated USING (contrato_id = get_contrato_id());
 CREATE POLICY "ref_service" ON tramos_aux_infra
   FOR ALL TO service_role USING (TRUE) WITH CHECK (TRUE);
 
 CREATE POLICY "ref_select" ON tramos_aux_tramos
-  FOR SELECT TO authenticated USING (TRUE);
+  FOR SELECT TO authenticated USING (contrato_id = get_contrato_id());
 CREATE POLICY "ref_service" ON tramos_aux_tramos
   FOR ALL TO service_role USING (TRUE) WITH CHECK (TRUE);
 
@@ -599,40 +637,39 @@ DROP POLICY IF EXISTS "tbd_obra_update"  ON tramos_bd;
 DROP POLICY IF EXISTS "tbd_service"      ON tramos_bd;
 
 CREATE POLICY "tbd_select" ON tramos_bd
-  FOR SELECT TO authenticated USING (TRUE);
+  FOR SELECT TO authenticated USING (contrato_id = get_contrato_id());
 
 CREATE POLICY "tbd_obra_update" ON tramos_bd
   FOR UPDATE TO authenticated
-  USING    (get_rol() IN ('obra', 'admin'))
+  USING    (get_rol() IN ('obra', 'admin') AND contrato_id = get_contrato_id())
   WITH CHECK (get_rol() IN ('obra', 'admin'));
 
 CREATE POLICY "tbd_service" ON tramos_bd
   FOR ALL TO service_role USING (TRUE) WITH CHECK (TRUE);
 
 CREATE POLICY "ref_select" ON presupuesto_aux_actividad
-  FOR SELECT TO authenticated USING (TRUE);
+  FOR SELECT TO authenticated USING (contrato_id = get_contrato_id());
 CREATE POLICY "ref_service" ON presupuesto_aux_actividad
   FOR ALL TO service_role USING (TRUE) WITH CHECK (TRUE);
 
 CREATE POLICY "ref_select" ON presupuesto_aux_capitulos
-  FOR SELECT TO authenticated USING (TRUE);
+  FOR SELECT TO authenticated USING (contrato_id = get_contrato_id());
 CREATE POLICY "ref_service" ON presupuesto_aux_capitulos
   FOR ALL TO service_role USING (TRUE) WITH CHECK (TRUE);
 
 CREATE POLICY "ref_select" ON presupuesto_bd
-  FOR SELECT TO authenticated USING (TRUE);
+  FOR SELECT TO authenticated USING (contrato_id = get_contrato_id());
 CREATE POLICY "ref_service" ON presupuesto_bd
   FOR ALL TO service_role USING (TRUE) WITH CHECK (TRUE);
 
 CREATE POLICY "ref_select" ON presupuesto_componentes_bd
-  FOR SELECT TO authenticated USING (TRUE);
+  FOR SELECT TO authenticated USING (contrato_id = get_contrato_id());
 CREATE POLICY "ref_service" ON presupuesto_componentes_bd
   FOR ALL TO service_role USING (TRUE) WITH CHECK (TRUE);
 
--- presupuesto_componentes_aux  [CORREGIDO — faltaba RLS]
 ALTER TABLE presupuesto_componentes_aux ENABLE ROW LEVEL SECURITY;
 CREATE POLICY "ref_select" ON presupuesto_componentes_aux
-  FOR SELECT TO authenticated USING (TRUE);
+  FOR SELECT TO authenticated USING (contrato_id = get_contrato_id());
 CREATE POLICY "ref_service" ON presupuesto_componentes_aux
   FOR ALL TO service_role USING (TRUE) WITH CHECK (TRUE);
 
@@ -658,11 +695,11 @@ CREATE POLICY "pmt_inspector_insert" ON formulario_pmt
 -- [FIX] Eliminada pmt_residente_select (duplicada: 'obra' ya estaba cubierta aquí).
 CREATE POLICY "pmt_inspector_select" ON formulario_pmt
   FOR SELECT TO authenticated
-  USING (get_rol() IN ('operativo', 'obra'));
+  USING (get_rol() IN ('operativo', 'obra') AND contrato_id = get_contrato_id());
 
 CREATE POLICY "pmt_interventor_select" ON formulario_pmt
   FOR SELECT TO authenticated
-  USING (get_rol() IN ('interventoria', 'supervision'));
+  USING (get_rol() IN ('interventoria', 'supervision') AND contrato_id = get_contrato_id());
 
 CREATE POLICY "pmt_admin_all" ON formulario_pmt
   FOR ALL TO authenticated
@@ -687,21 +724,21 @@ ALTER TABLE rf_reporte_diario ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS "rf_select"  ON rf_cantidades;
 DROP POLICY IF EXISTS "rf_service" ON rf_cantidades;
 CREATE POLICY "rf_select"  ON rf_cantidades
-  FOR SELECT TO authenticated USING (TRUE);
+  FOR SELECT TO authenticated USING (contrato_id = get_contrato_id());
 CREATE POLICY "rf_service" ON rf_cantidades
   FOR ALL TO service_role USING (TRUE) WITH CHECK (TRUE);
 
 DROP POLICY IF EXISTS "rf_select"  ON rf_componentes;
 DROP POLICY IF EXISTS "rf_service" ON rf_componentes;
 CREATE POLICY "rf_select"  ON rf_componentes
-  FOR SELECT TO authenticated USING (TRUE);
+  FOR SELECT TO authenticated USING (contrato_id = get_contrato_id());
 CREATE POLICY "rf_service" ON rf_componentes
   FOR ALL TO service_role USING (TRUE) WITH CHECK (TRUE);
 
 DROP POLICY IF EXISTS "rf_select"  ON rf_reporte_diario;
 DROP POLICY IF EXISTS "rf_service" ON rf_reporte_diario;
 CREATE POLICY "rf_select"  ON rf_reporte_diario
-  FOR SELECT TO authenticated USING (TRUE);
+  FOR SELECT TO authenticated USING (contrato_id = get_contrato_id());
 CREATE POLICY "rf_service" ON rf_reporte_diario
   FOR ALL TO service_role USING (TRUE) WITH CHECK (TRUE);
 
@@ -722,28 +759,28 @@ ALTER TABLE bd_sst_ambiental       ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS "bd_select"  ON bd_personal_obra;
 DROP POLICY IF EXISTS "bd_service" ON bd_personal_obra;
 CREATE POLICY "bd_select"  ON bd_personal_obra
-  FOR SELECT TO authenticated USING (TRUE);
+  FOR SELECT TO authenticated USING (contrato_id = get_contrato_id());
 CREATE POLICY "bd_service" ON bd_personal_obra
   FOR ALL TO service_role USING (TRUE) WITH CHECK (TRUE);
 
 DROP POLICY IF EXISTS "bd_select"  ON bd_condicion_climatica;
 DROP POLICY IF EXISTS "bd_service" ON bd_condicion_climatica;
 CREATE POLICY "bd_select"  ON bd_condicion_climatica
-  FOR SELECT TO authenticated USING (TRUE);
+  FOR SELECT TO authenticated USING (contrato_id = get_contrato_id());
 CREATE POLICY "bd_service" ON bd_condicion_climatica
   FOR ALL TO service_role USING (TRUE) WITH CHECK (TRUE);
 
 DROP POLICY IF EXISTS "bd_select"  ON bd_maquinaria_obra;
 DROP POLICY IF EXISTS "bd_service" ON bd_maquinaria_obra;
 CREATE POLICY "bd_select"  ON bd_maquinaria_obra
-  FOR SELECT TO authenticated USING (TRUE);
+  FOR SELECT TO authenticated USING (contrato_id = get_contrato_id());
 CREATE POLICY "bd_service" ON bd_maquinaria_obra
   FOR ALL TO service_role USING (TRUE) WITH CHECK (TRUE);
 
 DROP POLICY IF EXISTS "bd_select"  ON bd_sst_ambiental;
 DROP POLICY IF EXISTS "bd_service" ON bd_sst_ambiental;
 CREATE POLICY "bd_select"  ON bd_sst_ambiental
-  FOR SELECT TO authenticated USING (TRUE);
+  FOR SELECT TO authenticated USING (contrato_id = get_contrato_id());
 CREATE POLICY "bd_service" ON bd_sst_ambiental
   FOR ALL TO service_role USING (TRUE) WITH CHECK (TRUE);
 
@@ -781,10 +818,10 @@ DROP POLICY IF EXISTS "ag_select_authenticated"  ON anotaciones_generales;
 DROP POLICY IF EXISTS "ag_insert_non_supervisor" ON anotaciones_generales;
 DROP POLICY IF EXISTS "ag_insert_authenticated"  ON anotaciones_generales;
 
--- Lectura: cualquier usuario autenticado
+-- Lectura: usuarios del mismo contrato
 CREATE POLICY "ag_select_authenticated" ON anotaciones_generales
   FOR SELECT TO authenticated
-  USING (TRUE);
+  USING (contrato_id = get_contrato_id());
 
 -- Inserción: todos los roles autenticados (incluyendo supervisor)
 -- WITH CHECK (TRUE) es seguro porque el trigger tg_ag_identity (BEFORE INSERT)
@@ -797,8 +834,8 @@ CREATE POLICY "ag_insert_authenticated" ON anotaciones_generales
 
 
 -- ── Trigger de identidad: evita suplantación en anotaciones ──────────────
--- Sobreescribe usuario_nombre, usuario_rol y usuario_empresa con los valores
--- reales del perfil del usuario autenticado, ignorando lo que la app envíe.
+-- Sobreescribe identidad y contrato_id con los valores reales del perfil,
+-- ignorando lo que la app envíe (previene suplantación y cross-tenant).
 
 CREATE OR REPLACE FUNCTION enforce_anotacion_identity()
 RETURNS TRIGGER AS $$
@@ -809,6 +846,7 @@ BEGIN
   NEW.usuario_nombre  := p.nombre;
   NEW.usuario_rol     := p.rol;
   NEW.usuario_empresa := p.empresa;
+  NEW.contrato_id     := p.contrato_id;   -- garantiza aislamiento de tenant
   RETURN NEW;
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public;
@@ -834,10 +872,10 @@ DROP POLICY IF EXISTS "corresp_insert"        ON correspondencia;
 DROP POLICY IF EXISTS "corresp_update"        ON correspondencia;
 DROP POLICY IF EXISTS "corresp_service"       ON correspondencia;
 
--- Lectura: cualquier usuario autenticado
+-- Lectura: usuarios del mismo contrato
 CREATE POLICY "corresp_select" ON correspondencia
   FOR SELECT TO authenticated
-  USING (TRUE);
+  USING (contrato_id = get_contrato_id());
 
 -- [SECURITY] Separado en INSERT y UPDATE explícitos para excluir DELETE.
 -- FOR ALL previo permitía que 'obra' borrara registros de correspondencia.
@@ -870,7 +908,7 @@ DROP POLICY IF EXISTS "tbdh_obra_insert"  ON tramos_bd_historial;
 DROP POLICY IF EXISTS "tbdh_service"      ON tramos_bd_historial;
 
 CREATE POLICY "tbdh_select" ON tramos_bd_historial
-  FOR SELECT TO authenticated USING (TRUE);
+  FOR SELECT TO authenticated USING (contrato_id = get_contrato_id());
 
 CREATE POLICY "tbdh_obra_insert" ON tramos_bd_historial
   FOR INSERT TO authenticated
