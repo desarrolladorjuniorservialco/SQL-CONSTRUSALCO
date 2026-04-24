@@ -1008,3 +1008,32 @@ COMMENT ON COLUMN tramos_bd_historial.ejecutado_ant      IS 'Valor de ejecutado 
 COMMENT ON COLUMN tramos_bd_historial.ejecutado_nuevo    IS 'Nuevo valor de ejecutado registrado por el rol obra.';
 COMMENT ON COLUMN tramos_bd_historial.modificado_nombre  IS 'Nombre del usuario desnormalizado para consulta rápida sin JOIN.';
 COMMENT ON COLUMN tramos_bd_historial.modificado_en      IS 'Timestamp UTC del momento del cambio; la app convierte a UTC-5 para visualización.';
+
+
+-- ════════════════════════════════════════════════════════════
+-- PATCH: tramos_bd — PK compuesta (contrato_id, id_tramo)
+--        Necesario para soporte multi-contrato: la PK original
+--        id_tramo TEXT PRIMARY KEY impide insertar T-01 de un
+--        segundo contrato cuando ya existe para el primero.
+-- ════════════════════════════════════════════════════════════
+
+-- 1. Eliminar FK de historial que apunta a la PK vieja
+ALTER TABLE tramos_bd_historial
+  DROP CONSTRAINT IF EXISTS tramos_bd_historial_id_tramo_fkey;
+
+-- 2. Reemplazar PK simple por compuesta
+ALTER TABLE tramos_bd
+  DROP CONSTRAINT IF EXISTS tramos_bd_pkey;
+ALTER TABLE tramos_bd
+  ADD PRIMARY KEY (contrato_id, id_tramo);
+
+-- 3. Eliminar UNIQUE redundante (la nueva PK la cubre)
+ALTER TABLE tramos_bd
+  DROP CONSTRAINT IF EXISTS tramos_bd_contrato_id_id_tramo_key;
+
+-- 4. Recrear FK compuesta en historial
+ALTER TABLE tramos_bd_historial
+  ADD CONSTRAINT tramos_bd_historial_tramo_fkey
+    FOREIGN KEY (contrato_id, id_tramo)
+    REFERENCES tramos_bd(contrato_id, id_tramo)
+    ON DELETE CASCADE;
