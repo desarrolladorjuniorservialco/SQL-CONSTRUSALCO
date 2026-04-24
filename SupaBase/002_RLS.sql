@@ -916,3 +916,29 @@ CREATE POLICY "tbdh_obra_insert" ON tramos_bd_historial
 
 CREATE POLICY "tbdh_service" ON tramos_bd_historial
   FOR ALL TO service_role USING (TRUE) WITH CHECK (TRUE);
+
+
+-- ════════════════════════════════════════════════════════════
+-- STORAGE · Bucket Registro_Obra
+--   Ruta: {contrato_id}/{folio}/{filename}
+--   Lectura: usuarios del contrato solo ven su carpeta.
+--   Escritura: solo service_role (sync QField → photos.py).
+--
+-- NOTA: el bucket debe crearse primero en el dashboard de
+-- Supabase (Storage → New bucket → "Registro_Obra", privado).
+-- ════════════════════════════════════════════════════════════
+
+DROP POLICY IF EXISTS "fotos_select"  ON storage.objects;
+DROP POLICY IF EXISTS "fotos_service" ON storage.objects;
+
+CREATE POLICY "fotos_select" ON storage.objects
+  FOR SELECT TO authenticated
+  USING (
+    bucket_id = 'Registro_Obra'
+    AND (storage.foldername(name))[1] = public.get_contrato_id()
+  );
+
+CREATE POLICY "fotos_service" ON storage.objects
+  FOR ALL TO service_role
+  USING    (bucket_id = 'Registro_Obra')
+  WITH CHECK (bucket_id = 'Registro_Obra');

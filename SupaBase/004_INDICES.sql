@@ -242,3 +242,15 @@ CREATE INDEX IF NOT EXISTS rf_rd_idx_folio
 -- Lookup principal: historial ordenado por timestamp (chat view)
 CREATE INDEX IF NOT EXISTS ag_idx_created_at
   ON anotaciones_generales (created_at ASC);
+
+
+-- ════════════════════════════════════════════════════════════
+-- tramos_bd_historial  (prefijo tbdh_)
+-- FK compuesta (contrato_id, id_tramo) tras PATCH de 001_TABLAS
+-- ════════════════════════════════════════════════════════════
+
+CREATE INDEX IF NOT EXISTS tbdh_idx_contrato_tramo
+  ON tramos_bd_historial(contrato_id, id_tramo);
+
+CREATE INDEX IF NOT EXISTS tbdh_idx_modificado_en
+  ON tramos_bd_historial(modificado_en DESC);
