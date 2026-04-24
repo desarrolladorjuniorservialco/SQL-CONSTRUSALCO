@@ -5,10 +5,9 @@
 -- Discriminador de tenant: contrato_id (FK a contratos.id)
 -- presente en TODAS las tablas de datos y catálogos.
 --
--- Referencia histórica del primer contrato:
--- Contrato IDU-1556-2025 · Consorcio Obras Peatonales 2025
--- Contratista  : URBACON SAS
--- Interventoría: CONSORCIO INTERCONSERVACION
+-- Los datos de cada contrato se insertan vía sync_contrato.py
+-- leyendo Contrato.xlsx desde QFieldCloud (hoja BD_CTO_INI).
+-- El DDL es genérico; no hardcodear IDs ni valores de contratos.
 --
 --   CORRECCIONES ACUMULADAS
 --   ─────────────────────────────────────────────
@@ -42,12 +41,8 @@
 --               versión anterior: valor_contrato, prorrogas, plazo_actual,
 --               adiciones, valor_actual.
 --
---   [PATCH-003] contratos INSERT: datos reales del Excel.
---               contratista    = 'URBACON SAS'
---               intrventoria   = 'CONSORCIO INTERCONSERVACION'
---               fecha_inicio   = 2025-12-26
---               fecha_fin      = 2028-02-26
---               valor_contrato = 40704606199
+--   [PATCH-003] contratos INSERT eliminado — datos provienen del
+--               sync_contrato.py (Contrato.xlsx · hoja BD_CTO_INI).
 --
 --   [PATCH-004] Nueva tabla contratos_prorrogas (hoja BD_CTO_PRO).
 --   [PATCH-005] Nueva tabla contratos_adiciones  (hoja BD_CTO_ADI).
@@ -138,47 +133,11 @@ ALTER TABLE contratos
   ADD COLUMN IF NOT EXISTS adiciones      INTEGER DEFAULT 0,
   ADD COLUMN IF NOT EXISTS valor_actual   BIGINT;
 
--- ── [PATCH-003] Datos reales del Excel BD_CTO_INI ───────────────────
-INSERT INTO contratos (
-  id,
-  nombre,
-  contratista,
-  intrventoria,
-  supervisor_idu,
-  fecha_inicio,
-  fecha_fin,
-  activo,
-  valor_contrato,
-  prorrogas,
-  plazo_actual,
-  adiciones,
-  valor_actual
-) VALUES (
-  'IDU-1556-2025',
-  'Contrato IDU-1556-2025 Grupo 4',
-  'URBACON SAS',
-  'CONSORCIO INTERCONSERVACION',
-  'IDU',
-  '2025-12-26',
-  '2028-02-26',
-  TRUE,
-  40704606199,
-  0,
-  '2028-02-26',
-  0,
-  40704606199
-)
-ON CONFLICT (id) DO UPDATE SET
-  nombre         = EXCLUDED.nombre,
-  contratista    = EXCLUDED.contratista,
-  intrventoria   = EXCLUDED.intrventoria,
-  supervisor_idu = EXCLUDED.supervisor_idu,
-  fecha_inicio   = EXCLUDED.fecha_inicio,
-  fecha_fin      = EXCLUDED.fecha_fin,
-  valor_contrato = EXCLUDED.valor_contrato,
-  plazo_actual   = EXCLUDED.plazo_actual,
-  valor_actual   = EXCLUDED.valor_actual;
-  -- prorrogas y adiciones NO se tocan aquí: los mantiene el trigger.
+-- ── [PATCH-003] Eliminado — datos de contratos provienen del sync ───
+-- Los registros en la tabla contratos se crean y actualizan
+-- automáticamente por sync_contrato.py al leer Contrato.xlsx
+-- desde QFieldCloud (hoja BD_CTO_INI). No se deben hardcodear
+-- aquí para mantener el DDL genérico y multi-contrato.
 
 
 -- ── Tabla perfiles (después de contratos por la FK) ──────────────────
@@ -976,7 +935,7 @@ CREATE TABLE IF NOT EXISTS correspondencia (
   modificado_por_nombre TEXT
 );
 
-COMMENT ON TABLE  correspondencia                        IS 'Seguimiento de correspondencia del contrato IDU-1556-2025.';
+COMMENT ON TABLE  correspondencia                        IS 'Seguimiento de correspondencia contractual (multi-contrato).';
 COMMENT ON COLUMN correspondencia.consecutivo            IS 'Número consecutivo del documento de correspondencia.';
 COMMENT ON COLUMN correspondencia.plazo_respuesta        IS 'Fecha límite para dar respuesta. Filas en PENDIENTE sin respuesta y con esta fecha vencida se resaltan en amarillo.';
 COMMENT ON COLUMN correspondencia.modificado_por_nombre  IS 'Nombre de la persona que realizó la última modificación (desnormalizado para auditoría rápida).';

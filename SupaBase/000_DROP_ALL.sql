@@ -1,6 +1,6 @@
 -- ============================================================
 -- MÓDULO 000 · DROP ALL TABLES
--- Contrato IDU-1556-2025 · Consorcio Obras Peatonales 2025
+-- Arquitectura multitenant — un proyecto Supabase, múltiples contratos.
 --
 -- Ejecutar ANTES de 001_TABLAS.sql para resetear el esquema.
 -- CASCADE elimina automáticamente los FK dependientes.

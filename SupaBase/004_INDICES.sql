@@ -1,6 +1,6 @@
 -- ============================================================
 -- MÓDULO 004 · ÍNDICES
--- Contrato IDU-1556-2025 · Consorcio Obras Peatonales 2025
+-- Arquitectura multitenant — un proyecto Supabase, múltiples contratos.
 --
 --   BUG CRÍTICO CORREGIDO
 --   ─────────────────────────────────────────────
