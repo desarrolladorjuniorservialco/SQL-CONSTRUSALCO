@@ -1,87 +1,18 @@
 -- ============================================================
 -- MÓDULO 001 · TABLAS (DDL)
--- Arquitectura multitenant — un proyecto Supabase por empresa,
--- múltiples contratos por proyecto.
--- Discriminador de tenant: contrato_id (FK a contratos.id)
--- presente en TODAS las tablas de datos y catálogos.
+-- Arquitectura multitenant — discriminador de tenant: contrato_id (FK a contratos.id)
+-- presente en todas las tablas de datos y catálogos.
 --
--- Los datos de cada contrato se insertan vía sync_contrato.py
--- leyendo Contrato.xlsx desde QFieldCloud (hoja BD_CTO_INI).
+-- Los datos de contratos se cargan vía sync_contrato.py (Contrato.xlsx → QFieldCloud).
 -- El DDL es genérico; no hardcodear IDs ni valores de contratos.
 --
---   CORRECCIONES ACUMULADAS
---   ─────────────────────────────────────────────
---   [BUG-001] historial_estados.registro_id : eliminada FK a registros_cantidades(id)
---             → ahora es UUID sin FK + tabla_origen TEXT con CHECK para saber
---               de qué formulario proviene el registro (cantidades/componentes/
---               reporte_diario). Sin este cambio los triggers de log_cambio_estado
---               fallan con violación de FK sobre registros_componentes y
---               registros_reporte_diario.
---
---   [BUG-002] notificaciones.registro_id : misma corrección que [BUG-001].
---             La función crear_notificacion se dispara sobre las 3 tablas;
---             sin eliminar la FK el INSERT falla en 2 de las 3.
---
---   [BUG-003] registros_cantidades.folio : eliminado UNIQUE.
---             El GPKG puede tener varios ítems con el mismo folio
---             (uno por ítem de pago). El sync hace upsert por id_unico.
---
---   [BUG-004] rf_* : eliminada FK en id_unico + agregada columna foto_url.
---             id_unico en rf_* es el identificador propio de cada foto,
---             NO una FK al formulario padre. La relación fotos↔formulario
---             se establece por folio. foto_url guarda la URL pública en
---             Supabase Storage (bucket fotos-obra) para uso en Streamlit.
---
---   [PATCH-001] contratos: columna renombrada interventoria → intrventoria
---               para coincidir con el encabezado real del Excel
---               Contrato_IDU_1556_2025.xlsx · hoja BD_CTO_INI.
---               Se ejecuta con DO block idempotente.
---
---   [PATCH-002] contratos: agregadas columnas del Excel ausentes en la
---               versión anterior: valor_contrato, prorrogas, plazo_actual,
---               adiciones, valor_actual.
---
---   [PATCH-003] contratos INSERT eliminado — datos provienen del
---               sync_contrato.py (Contrato.xlsx · hoja BD_CTO_INI).
---
---   [PATCH-004] Nueva tabla contratos_prorrogas (hoja BD_CTO_PRO).
---   [PATCH-005] Nueva tabla contratos_adiciones  (hoja BD_CTO_ADI).
---   [PATCH-006] Triggers que mantienen contadores/valores sincronizados
---               en contratos al insertar/modificar/borrar en las tablas
---               de detalle.
---
---   MÓDULOS
---   1.  Perfiles / Contratos
---   2.  Tablas de referencia geográfica (Tramos, Localidades)
---   3.  Tablas de Presupuesto
---   4.  Formularios principales (Cantidades, Componentes, Reporte Diario)
---   5.  Tablas secundarias del Reporte Diario (Personal, Maquinaria, SST…)
---   6.  Registros fotográficos (rf_*)
---   7.  Formularios geográficos adicionales (PMT)
---   8.  Auditoría y flujo (historial_estados, cierres, notificaciones)
---   9.  Seguimiento contractual (prórrogas, adiciones)
---   11. Anotaciones Generales de Bitácora  ← NUEVO
---
---   CONVENCIÓN DE NOMBRES
---   · Todas las tablas y columnas en snake_case minúsculas
---     para coincidir exactamente con el sync QFieldCloud→Supabase.
---   · PostgreSQL convierte identificadores sin comillas a minúsculas;
---     usar snake_case explícito evita confusiones.
---
---   RELACIONES
---   · bd_personal_obra.folio          → registros_reporte_diario.folio
---   · bd_condicion_climatica.folio    → registros_reporte_diario.folio
---   · bd_maquinaria_obra.folio        → registros_reporte_diario.folio
---   · bd_sst_ambiental.folio          → registros_reporte_diario.folio
---   · rf_cantidades.folio             → registros_cantidades.folio  (sin FK id_unico)
---   · rf_componentes.folio            → registros_componentes.folio
---   · rf_reporte_diario.folio         → registros_reporte_diario.folio
---   · contratos_prorrogas.contrato_id → contratos.id
---   · contratos_adiciones.contrato_id → contratos.id
---
---   NOTA: Los módulos 002 (RLS), 003 (Triggers) y 004 (Índices) también
---         fueron corregidos para operar sobre las 3 tablas reales en lugar
---         de la tabla 'registros' que no existe en el DDL.
+-- Módulos
+--   1. Perfiles / Contratos           5. Tablas secundarias (bd_*)
+--   2. Referencia geográfica          6. Registros fotográficos (rf_*)
+--   3. Presupuesto                    7. Formularios geográficos (PMT)
+--   4. Formularios principales        8. Auditoría y flujo
+--   9. Seguimiento contractual       11. Anotaciones · 12. Correspondencia
+--  13. Historial de ejecución de meta física
 -- ============================================================
 
 
@@ -90,57 +21,26 @@
 --    ORDEN OBLIGATORIO: contratos primero — perfiles tiene FK a contratos.
 -- ════════════════════════════════════════════════════════════
 
--- ── [PATCH-001/002] Tabla contratos con todas las columnas ───────────
 -- Debe crearse ANTES que perfiles porque perfiles.contrato_id la referencia.
+-- Los datos se cargan vía sync_contrato.py (Contrato.xlsx → QFieldCloud).
 CREATE TABLE IF NOT EXISTS contratos (
   id             TEXT PRIMARY KEY,
   nombre         TEXT NOT NULL,
   contratista    TEXT NOT NULL,
-  intrventoria   TEXT NOT NULL,       -- [PATCH-001] nombre real del Excel BD_CTO_INI
+  intrventoria   TEXT NOT NULL,       -- nombre real de la columna en el Excel BD_CTO_INI
   supervisor_idu TEXT,
   fecha_inicio   DATE,
   fecha_fin      DATE,
   activo         BOOLEAN DEFAULT TRUE,
-  -- [PATCH-002] columnas nuevas provenientes del Excel
   valor_contrato BIGINT,              -- valor original del contrato (COP)
   prorrogas      INTEGER DEFAULT 0,   -- contador; actualizado por trigger
   plazo_actual   DATE,                -- fecha fin vigente; actualizada por trigger
-  adiciones      INTEGER DEFAULT 0,  -- contador; actualizado por trigger
+  adiciones      INTEGER DEFAULT 0,   -- contador; actualizado por trigger
   valor_actual   BIGINT               -- valor vigente; actualizado por trigger
 );
 
--- ── [PATCH-001] Renombrar columna si aún existe con nombre viejo ─────
-DO $$
-BEGIN
-  IF EXISTS (
-    SELECT 1 FROM information_schema.columns
-     WHERE table_name  = 'contratos'
-       AND column_name = 'interventoria'
-  ) AND NOT EXISTS (
-    SELECT 1 FROM information_schema.columns
-     WHERE table_name  = 'contratos'
-       AND column_name = 'intrventoria'
-  ) THEN
-    ALTER TABLE contratos RENAME COLUMN interventoria TO intrventoria;
-  END IF;
-END $$;
 
--- ── [PATCH-002] Agregar columnas si la tabla ya existía sin ellas ────
-ALTER TABLE contratos
-  ADD COLUMN IF NOT EXISTS valor_contrato BIGINT,
-  ADD COLUMN IF NOT EXISTS prorrogas      INTEGER DEFAULT 0,
-  ADD COLUMN IF NOT EXISTS plazo_actual   DATE,
-  ADD COLUMN IF NOT EXISTS adiciones      INTEGER DEFAULT 0,
-  ADD COLUMN IF NOT EXISTS valor_actual   BIGINT;
-
--- ── [PATCH-003] Eliminado — datos de contratos provienen del sync ───
--- Los registros en la tabla contratos se crean y actualizan
--- automáticamente por sync_contrato.py al leer Contrato.xlsx
--- desde QFieldCloud (hoja BD_CTO_INI). No se deben hardcodear
--- aquí para mantener el DDL genérico y multi-contrato.
-
-
--- ── Tabla perfiles (después de contratos por la FK) ──────────────────
+-- Tabla perfiles (después de contratos por la FK)
 CREATE TABLE IF NOT EXISTS perfiles (
   id          UUID REFERENCES auth.users(id) ON DELETE CASCADE PRIMARY KEY,
   nombre      TEXT NOT NULL,
@@ -154,30 +54,13 @@ CREATE TABLE IF NOT EXISTS perfiles (
   creado_en   TIMESTAMPTZ DEFAULT NOW()
 );
 
--- Idempotente: renombrar columna si ya existe con nombre viejo
-DO $$
-BEGIN
-  IF EXISTS (
-    SELECT 1 FROM information_schema.columns
-     WHERE table_name = 'perfiles' AND column_name = 'contrato'
-  ) AND NOT EXISTS (
-    SELECT 1 FROM information_schema.columns
-     WHERE table_name = 'perfiles' AND column_name = 'contrato_id'
-  ) THEN
-    ALTER TABLE perfiles RENAME COLUMN contrato TO contrato_id;
-  END IF;
-END $$;
-
--- Eliminar DEFAULT hardcodeado si aún existe
-ALTER TABLE perfiles ALTER COLUMN contrato_id DROP DEFAULT;
-
 
 -- ════════════════════════════════════════════════════════════
 -- 2. TABLAS DE REFERENCIA GEOGRÁFICA
---    Fuente: TramosIDU15562025*.gpkg · loca.gpkg
+--    Fuente: BD_Tramos.gpkg · AUX_Tramos.gpkg · loca.gpkg
 -- ════════════════════════════════════════════════════════════
 
--- 2.1 Localidades  (loca · Loca)
+-- 2.1 Localidades  (loca.gpkg → capa Loca)
 CREATE TABLE IF NOT EXISTS localidades (
   id          SERIAL PRIMARY KEY,
   contrato_id TEXT NOT NULL REFERENCES contratos(id),
@@ -187,23 +70,18 @@ CREATE TABLE IF NOT EXISTS localidades (
   loc_area    NUMERIC(18,4),
   UNIQUE (contrato_id, loc_codigo)
 );
-ALTER TABLE localidades
-  ADD COLUMN IF NOT EXISTS contrato_id TEXT REFERENCES contratos(id);
 
--- 2.2 Catálogo de tipos de infraestructura  (TramosIDU15562025AUXINFRA)
+-- 2.2 Catálogo de tipos de infraestructura  (AUX_Infra.gpkg)
 --     Valores típicos: EP=Espacio Público, CI=Ciclorruta, MV=Malla Vial
---     PK compuesta (contrato_id, codigo): el mismo código puede existir
---     en distintos contratos. FK desde tramos_bd eliminada (patrón sin FK).
+--     PK compuesta: el mismo código puede existir en distintos contratos.
 CREATE TABLE IF NOT EXISTS tramos_aux_infra (
   contrato_id TEXT NOT NULL REFERENCES contratos(id),
   codigo      TEXT NOT NULL,
   nombre      TEXT NOT NULL,
   PRIMARY KEY (contrato_id, codigo)
 );
-ALTER TABLE tramos_aux_infra
-  ADD COLUMN IF NOT EXISTS contrato_id TEXT REFERENCES contratos(id);
 
--- 2.3 Catálogo de tramos  (TramosIDU15562025AUXTRAMOS)
+-- 2.3 Catálogo de tramos  (AUX_Tramos.gpkg)
 --     PK compuesta: el mismo código de tramo puede existir en distintos contratos.
 CREATE TABLE IF NOT EXISTS tramos_aux_tramos (
   contrato_id TEXT NOT NULL REFERENCES contratos(id),
@@ -211,10 +89,8 @@ CREATE TABLE IF NOT EXISTS tramos_aux_tramos (
   descripcion TEXT NOT NULL,
   PRIMARY KEY (contrato_id, codigo)
 );
-ALTER TABLE tramos_aux_tramos
-  ADD COLUMN IF NOT EXISTS contrato_id TEXT REFERENCES contratos(id);
 
--- 2.4 Base de datos de tramos  (TramosIDU15562025BDTRAMOS)
+-- 2.4 Base de datos de tramos  (BD_Tramos.gpkg)
 --     infraestructura: texto sin FK (patrón sin FK para evitar 23503 en sync).
 CREATE TABLE IF NOT EXISTS tramos_bd (
   id_tramo          TEXT PRIMARY KEY,
@@ -236,14 +112,6 @@ CREATE TABLE IF NOT EXISTS tramos_bd (
   ejecutado         NUMERIC(14,4) DEFAULT 0,
   UNIQUE (contrato_id, id_tramo)
 );
-ALTER TABLE tramos_bd
-  ADD COLUMN IF NOT EXISTS contrato_id TEXT REFERENCES contratos(id);
-
--- Agregar columnas si la tabla ya existía sin ellas
-ALTER TABLE tramos_bd
-  ADD COLUMN IF NOT EXISTS meta_fisica NUMERIC(14,4),
-  ADD COLUMN IF NOT EXISTS und         TEXT,
-  ADD COLUMN IF NOT EXISTS ejecutado   NUMERIC(14,4) DEFAULT 0;
 
 -- Rellenar meta_fisica / und desde las columnas originales según infraestructura
 UPDATE tramos_bd SET
@@ -263,22 +131,19 @@ WHERE infraestructura = 'EP'
 
 -- ════════════════════════════════════════════════════════════
 -- 3. TABLAS DE PRESUPUESTO
---    Fuente: PresupuestoIDU15562025*.gpkg · Presupuesto_Componentes.gpkg
+--    Fuente: BD_Presupuesto.gpkg · AUX_Capitulos.gpkg · AUX_Componentes.gpkg
 -- ════════════════════════════════════════════════════════════
 
--- 3.1 Catálogo de tipos de actividad
---     PK compuesta (contrato_id, tipo_actividad): los mismos tipos de
---     actividad se repiten entre contratos. FKs eliminadas (patrón sin FK).
+-- 3.1 Catálogo de tipos de actividad  (AUX_Actividad.gpkg)
+--     PK compuesta: los mismos tipos de actividad se repiten entre contratos.
 CREATE TABLE IF NOT EXISTS presupuesto_aux_actividad (
   contrato_id    TEXT NOT NULL REFERENCES contratos(id),
   tipo_actividad TEXT NOT NULL,
   PRIMARY KEY (contrato_id, tipo_actividad)
 );
-ALTER TABLE presupuesto_aux_actividad
-  ADD COLUMN IF NOT EXISTS contrato_id TEXT REFERENCES contratos(id);
 
--- 3.2 Catálogo de capítulos
---     tipo_actividad: texto sin FK (PK de presupuesto_aux_actividad cambió).
+-- 3.2 Catálogo de capítulos  (AUX_Capitulos.gpkg)
+--     tipo_actividad: texto sin FK (PK de presupuesto_aux_actividad es compuesta).
 CREATE TABLE IF NOT EXISTS presupuesto_aux_capitulos (
   id             SERIAL PRIMARY KEY,
   contrato_id    TEXT NOT NULL REFERENCES contratos(id),
@@ -287,12 +152,9 @@ CREATE TABLE IF NOT EXISTS presupuesto_aux_capitulos (
   capitulo       TEXT,
   UNIQUE (contrato_id, tipo_actividad, capitulo_num)
 );
-ALTER TABLE presupuesto_aux_capitulos
-  ADD COLUMN IF NOT EXISTS contrato_id TEXT REFERENCES contratos(id);
 
--- 3.3 Presupuesto de obras  (PresupuestoIDU15562025BDPRESUPUESTO)
---     tipo_actividad: texto sin FK (PK de presupuesto_aux_actividad cambió).
---     codigo_idu: único por contrato (no global).
+-- 3.3 Presupuesto de obras  (BD_Presupuesto.gpkg)
+--     tipo_actividad: texto sin FK.  codigo_idu: único por contrato.
 CREATE TABLE IF NOT EXISTS presupuesto_bd (
   id             SERIAL PRIMARY KEY,
   contrato_id    TEXT NOT NULL REFERENCES contratos(id),
@@ -306,11 +168,9 @@ CREATE TABLE IF NOT EXISTS presupuesto_bd (
   cantidad_ppto  NUMERIC(16,4),
   UNIQUE (contrato_id, codigo_idu)
 );
-ALTER TABLE presupuesto_bd
-  ADD COLUMN IF NOT EXISTS contrato_id TEXT REFERENCES contratos(id);
 
--- 3.4 Presupuesto de componentes  (Presupuesto_Componentes · ppto_componentes)
---     codigo_idu: único por contrato (no global).
+-- 3.4 Presupuesto de componentes  (AUX_Componentes.gpkg)
+--     codigo_idu: único por contrato.
 CREATE TABLE IF NOT EXISTS presupuesto_componentes_bd (
   id              SERIAL PRIMARY KEY,
   contrato_id     TEXT NOT NULL REFERENCES contratos(id),
@@ -326,8 +186,6 @@ CREATE TABLE IF NOT EXISTS presupuesto_componentes_bd (
   item_pago       TEXT,
   UNIQUE (contrato_id, codigo_idu)
 );
-ALTER TABLE presupuesto_componentes_bd
-  ADD COLUMN IF NOT EXISTS contrato_id TEXT REFERENCES contratos(id);
 
 -- 3.5 Auxiliar de componentes
 CREATE TABLE IF NOT EXISTS presupuesto_componentes_aux (
@@ -338,8 +196,6 @@ CREATE TABLE IF NOT EXISTS presupuesto_componentes_aux (
   tipo_actividad TEXT,
   capitulo       TEXT
 );
-ALTER TABLE presupuesto_componentes_aux
-  ADD COLUMN IF NOT EXISTS contrato_id TEXT REFERENCES contratos(id);
 
 
 -- ════════════════════════════════════════════════════════════
@@ -348,15 +204,11 @@ ALTER TABLE presupuesto_componentes_aux
 --            Reporte_Diario.gpkg
 -- ════════════════════════════════════════════════════════════
 
--- 4.1 Formulario de Cantidades  (Formulario_Cantidades_V2)
---
---     [BUG-003] folio NO es UNIQUE — el GPKG puede tener varios ítems
---     con el mismo folio (uno por ítem de pago). El sync hace upsert
---     por id_unico.
---
---     Las columnas id_tramo, codigo_elemento, tipo_infra y tipo_actividad
---     NO tienen FK para evitar errores 23503 cuando el sync inserta datos
---     cuya tabla de referencia aún no ha sido sincronizada.
+-- 4.1 Formulario de Cantidades
+--     folio NO es UNIQUE — el GPKG puede tener varios ítems por folio
+--     (uno por ítem de pago). El upsert usa id_unico como clave.
+--     id_tramo, codigo_elemento, tipo_infra y tipo_actividad sin FK
+--     para evitar 23503 cuando el sync corre antes que los catálogos.
 CREATE TABLE IF NOT EXISTS registros_cantidades (
   id                       UUID DEFAULT gen_random_uuid() PRIMARY KEY,
   folio                    TEXT NOT NULL,
@@ -538,12 +390,11 @@ CREATE TABLE IF NOT EXISTS registros_reporte_diario (
 -- 5. TABLAS SECUNDARIAS DEL REPORTE DIARIO
 --    Fuente: BD_PersonalObra.gpkg · BD_CondicionClimatica.gpkg
 --            BD_MaquinariaObra.gpkg · BD_SST-Ambiental.gpkg
---    Relación: [tabla].folio (texto) — sin FK porque registros_reporte_diario
---    ya no tiene UNIQUE en folio ([PATCH-006]). El sync reconstruye bd_*
---    completo en cada ciclo (delete_all + insert).
+--    Relación: [tabla].folio (texto, sin FK) — el sync reconstruye
+--    estas tablas completas en cada ciclo (delete + insert).
 -- ════════════════════════════════════════════════════════════
 
--- 5.1 Personal de obra  (BD_PersonalObra)
+-- 5.1 Personal de obra
 CREATE TABLE IF NOT EXISTS bd_personal_obra (
   id                  UUID DEFAULT gen_random_uuid() PRIMARY KEY,
   contrato_id         TEXT REFERENCES contratos(id),
@@ -555,10 +406,8 @@ CREATE TABLE IF NOT EXISTS bd_personal_obra (
   longitud            DOUBLE PRECISION,
   latitud             DOUBLE PRECISION
 );
-ALTER TABLE bd_personal_obra
-  ADD COLUMN IF NOT EXISTS contrato_id TEXT REFERENCES contratos(id);
 
--- 5.2 Condición climática  (BD_CondicionClimatica)
+-- 5.2 Condición climática
 CREATE TABLE IF NOT EXISTS bd_condicion_climatica (
   id            UUID DEFAULT gen_random_uuid() PRIMARY KEY,
   contrato_id   TEXT REFERENCES contratos(id),
@@ -569,10 +418,8 @@ CREATE TABLE IF NOT EXISTS bd_condicion_climatica (
   longitud      DOUBLE PRECISION,
   latitud       DOUBLE PRECISION
 );
-ALTER TABLE bd_condicion_climatica
-  ADD COLUMN IF NOT EXISTS contrato_id TEXT REFERENCES contratos(id);
 
--- 5.3 Maquinaria en obra  (BD_MaquinariaObra)
+-- 5.3 Maquinaria en obra
 CREATE TABLE IF NOT EXISTS bd_maquinaria_obra (
   id                     UUID DEFAULT gen_random_uuid() PRIMARY KEY,
   contrato_id            TEXT REFERENCES contratos(id),
@@ -591,8 +438,6 @@ CREATE TABLE IF NOT EXISTS bd_maquinaria_obra (
   longitud               DOUBLE PRECISION,
   latitud                DOUBLE PRECISION
 );
-ALTER TABLE bd_maquinaria_obra
-  ADD COLUMN IF NOT EXISTS contrato_id TEXT REFERENCES contratos(id);
 
 -- 5.4 SST – Ambiental  (BD_SST-Ambiental)
 CREATE TABLE IF NOT EXISTS bd_sst_ambiental (
@@ -608,21 +453,17 @@ CREATE TABLE IF NOT EXISTS bd_sst_ambiental (
   punto_ecologico    NUMERIC(12,3),
   extintor           NUMERIC(12,3)
 );
-ALTER TABLE bd_sst_ambiental
-  ADD COLUMN IF NOT EXISTS contrato_id TEXT REFERENCES contratos(id);
 
 
 -- ════════════════════════════════════════════════════════════
 -- 6. REGISTROS FOTOGRÁFICOS
 --    Fuente: RF_Cantidades.gpkg · RF_Componentes.gpkg · RF_ReporteDiario.gpkg
---
---    [BUG-004] id_unico en estas tablas es el identificador propio de
---    cada registro fotográfico, NO una FK al formulario padre.
+--    id_unico: identificador del registro fotográfico (no FK al formulario).
 --    La relación fotos↔formulario se establece por folio.
---    foto_url: URL pública en Supabase Storage (bucket fotos-obra).
+--    foto_url: URL en Supabase Storage (bucket Registro_Obra/{contrato_id}/…).
 -- ════════════════════════════════════════════════════════════
 
--- 6.1 Fotos de cantidades  (RF_Cantidades)
+-- 6.1 Fotos de cantidades
 CREATE TABLE IF NOT EXISTS rf_cantidades (
   id                UUID DEFAULT gen_random_uuid() PRIMARY KEY,
   contrato_id       TEXT REFERENCES contratos(id),
@@ -633,10 +474,8 @@ CREATE TABLE IF NOT EXISTS rf_cantidades (
   ruta_destino_foto TEXT,
   foto_url          TEXT
 );
-ALTER TABLE rf_cantidades
-  ADD COLUMN IF NOT EXISTS contrato_id TEXT REFERENCES contratos(id);
 
--- 6.2 Fotos de componentes  (RF_Componentes)
+-- 6.2 Fotos de componentes
 CREATE TABLE IF NOT EXISTS rf_componentes (
   id            UUID DEFAULT gen_random_uuid() PRIMARY KEY,
   contrato_id   TEXT REFERENCES contratos(id),
@@ -646,10 +485,8 @@ CREATE TABLE IF NOT EXISTS rf_componentes (
   foto          TEXT,
   foto_url      TEXT
 );
-ALTER TABLE rf_componentes
-  ADD COLUMN IF NOT EXISTS contrato_id TEXT REFERENCES contratos(id);
 
--- 6.3 Fotos de reporte diario  (RF_ReporteDiario)
+-- 6.3 Fotos de reporte diario
 CREATE TABLE IF NOT EXISTS rf_reporte_diario (
   id            UUID DEFAULT gen_random_uuid() PRIMARY KEY,
   contrato_id   TEXT REFERENCES contratos(id),
@@ -659,8 +496,6 @@ CREATE TABLE IF NOT EXISTS rf_reporte_diario (
   foto          TEXT,
   foto_url      TEXT
 );
-ALTER TABLE rf_reporte_diario
-  ADD COLUMN IF NOT EXISTS contrato_id TEXT REFERENCES contratos(id);
 
 
 -- ════════════════════════════════════════════════════════════
@@ -685,12 +520,11 @@ CREATE TABLE IF NOT EXISTS formulario_pmt (
 
 -- ════════════════════════════════════════════════════════════
 -- 8. AUDITORÍA Y FLUJO
---
--- [BUG-001] historial_estados.registro_id sin FK + tabla_origen con CHECK.
--- [BUG-002] notificaciones.registro_id sin FK + tabla_origen con CHECK.
+--    registro_id sin FK para soportar las 3 tablas de formularios
+--    con un único historial genérico (tabla_origen discrimina).
 -- ════════════════════════════════════════════════════════════
 
--- 8.1 Historial de estados (genérico para cantidades, componentes y reporte)
+-- 8.1 Historial de estados (genérico para las 3 tablas de formularios)
 CREATE TABLE IF NOT EXISTS historial_estados (
   id              UUID DEFAULT gen_random_uuid() PRIMARY KEY,
   contrato_id     TEXT REFERENCES contratos(id),
@@ -708,20 +542,6 @@ CREATE TABLE IF NOT EXISTS historial_estados (
   observacion     TEXT,
   ip              TEXT
 );
-ALTER TABLE historial_estados
-  ADD COLUMN IF NOT EXISTS contrato_id TEXT REFERENCES contratos(id);
-
--- Idempotente: si la tabla ya existía, eliminar FK y agregar tabla_origen
-ALTER TABLE historial_estados
-  DROP CONSTRAINT IF EXISTS historial_estados_registro_id_fkey;
-
-ALTER TABLE historial_estados
-  ADD COLUMN IF NOT EXISTS tabla_origen TEXT DEFAULT 'registros_cantidades'
-  CHECK (tabla_origen IN (
-    'registros_cantidades',
-    'registros_componentes',
-    'registros_reporte_diario'
-  ));
 
 -- 8.2 Cierres semanales
 CREATE TABLE IF NOT EXISTS cierres_semanales (
@@ -749,7 +569,7 @@ CREATE TABLE IF NOT EXISTS cierre_registros (
   PRIMARY KEY (cierre_id, registro_id)
 );
 
--- 8.4 Notificaciones (genérico — registro_id sin FK)
+-- 8.4 Notificaciones (registro_id sin FK — genérico para las 3 tablas)
 CREATE TABLE IF NOT EXISTS notificaciones (
   id           UUID DEFAULT gen_random_uuid() PRIMARY KEY,
   contrato_id  TEXT REFERENCES contratos(id),
@@ -768,30 +588,14 @@ CREATE TABLE IF NOT EXISTS notificaciones (
   enviado_en   TIMESTAMPTZ,
   creado_en    TIMESTAMPTZ DEFAULT NOW()
 );
-ALTER TABLE notificaciones
-  ADD COLUMN IF NOT EXISTS contrato_id TEXT REFERENCES contratos(id);
-
--- Idempotente: si la tabla ya existía, eliminar FK y agregar tabla_origen
-ALTER TABLE notificaciones
-  DROP CONSTRAINT IF EXISTS notificaciones_registro_id_fkey;
-
-ALTER TABLE notificaciones
-  ADD COLUMN IF NOT EXISTS tabla_origen TEXT DEFAULT 'registros_cantidades'
-  CHECK (tabla_origen IN (
-    'registros_cantidades',
-    'registros_componentes',
-    'registros_reporte_diario'
-  ));
 
 
 -- ════════════════════════════════════════════════════════════
--- 9. SEGUIMIENTO CONTRACTUAL  [PATCH-004 / PATCH-005]
---    Origen: Contrato_IDU_1556_2025.xlsx
---      · hoja BD_CTO_PRO → contratos_prorrogas
---      · hoja BD_CTO_ADI → contratos_adiciones
+-- 9. SEGUIMIENTO CONTRACTUAL
+--    Origen: Contrato.xlsx · hojas BD_CTO_PRO y BD_CTO_ADI
 -- ════════════════════════════════════════════════════════════
 
--- 9.1 Prórrogas  (BD_CTO_PRO)
+-- 9.1 Prórrogas  (hoja BD_CTO_PRO)
 --     Columnas Excel:  no. → numero | plazo → plazo_dias | fecha_fin | fecha_firma
 CREATE TABLE IF NOT EXISTS contratos_prorrogas (
   id            UUID    DEFAULT gen_random_uuid() PRIMARY KEY,
@@ -812,7 +616,7 @@ COMMENT ON COLUMN contratos_prorrogas.plazo_dias   IS '"plazo" en Excel — día
 COMMENT ON COLUMN contratos_prorrogas.fecha_fin    IS 'Nueva fecha de terminación tras la prórroga.';
 COMMENT ON COLUMN contratos_prorrogas.fecha_firma  IS 'Fecha de suscripción del otrosí o acta.';
 
--- 9.2 Adiciones  (BD_CTO_ADI)
+-- 9.2 Adiciones  (hoja BD_CTO_ADI)
 --     Columnas Excel:  no. → numero | adicion | valor_actual | fecha_firma
 CREATE TABLE IF NOT EXISTS contratos_adiciones (
   id            UUID    DEFAULT gen_random_uuid() PRIMARY KEY,
@@ -902,8 +706,6 @@ CREATE TABLE IF NOT EXISTS anotaciones_generales (
     usuario_empresa  text,
     created_at       timestamptz DEFAULT now()
 );
-ALTER TABLE anotaciones_generales
-  ADD COLUMN IF NOT EXISTS contrato_id TEXT REFERENCES contratos(id);
 
 
 -- ════════════════════════════════════════════════════════════
@@ -959,8 +761,6 @@ CREATE TABLE IF NOT EXISTS tramos_bd_historial (
   modificado_nombre TEXT        NOT NULL,
   modificado_en     TIMESTAMPTZ DEFAULT NOW()
 );
-ALTER TABLE tramos_bd_historial
-  ADD COLUMN IF NOT EXISTS contrato_id TEXT REFERENCES contratos(id);
 
 COMMENT ON TABLE  tramos_bd_historial                    IS 'Auditoría de cambios al avance físico (ejecutado) por tramo.';
 COMMENT ON COLUMN tramos_bd_historial.ejecutado_ant      IS 'Valor de ejecutado antes del cambio (NULL en el primer registro).';
@@ -970,27 +770,22 @@ COMMENT ON COLUMN tramos_bd_historial.modificado_en      IS 'Timestamp UTC del m
 
 
 -- ════════════════════════════════════════════════════════════
--- PATCH: tramos_bd — PK compuesta (contrato_id, id_tramo)
---        Necesario para soporte multi-contrato: la PK original
---        id_tramo TEXT PRIMARY KEY impide insertar T-01 de un
---        segundo contrato cuando ya existe para el primero.
+-- MIGRACIÓN: tramos_bd — PK compuesta (contrato_id, id_tramo)
+--   La PK original era id_tramo TEXT (simple), que impide insertar
+--   el mismo id_tramo para un segundo contrato.
 -- ════════════════════════════════════════════════════════════
 
--- 1. Eliminar FK de historial que apunta a la PK vieja
 ALTER TABLE tramos_bd_historial
   DROP CONSTRAINT IF EXISTS tramos_bd_historial_id_tramo_fkey;
 
--- 2. Reemplazar PK simple por compuesta
 ALTER TABLE tramos_bd
   DROP CONSTRAINT IF EXISTS tramos_bd_pkey;
 ALTER TABLE tramos_bd
   ADD PRIMARY KEY (contrato_id, id_tramo);
 
--- 3. Eliminar UNIQUE redundante (la nueva PK la cubre)
 ALTER TABLE tramos_bd
   DROP CONSTRAINT IF EXISTS tramos_bd_contrato_id_id_tramo_key;
 
--- 4. Recrear FK compuesta en historial
 ALTER TABLE tramos_bd_historial
   ADD CONSTRAINT tramos_bd_historial_tramo_fkey
     FOREIGN KEY (contrato_id, id_tramo)

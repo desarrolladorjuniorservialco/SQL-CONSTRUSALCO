@@ -6,24 +6,11 @@
 --
 -- ROLES DEL SISTEMA
 -- ─────────────────────────────────────────────
---   operativo    → inspectores de campo; crean registros en QField
---                  y anotaciones generales; ven solo sus propios datos
---   obra         → residentes de obra; revisan y aprueban nivel 1
---                  (BORRADOR/DEVUELTO → REVISADO)
---   interventoria→ interventoría IDU; aprueban definitivamente nivel 2
---                  (REVISADO → APROBADO)
---   supervision  → supervisión IDU; solo lectura
---   admin        → administrador total del sistema
---
--- HISTORIAL DE CAMBIOS
--- ─────────────────────────────────────────────
---   [PATCH-001] Corregido bug: referencia a tabla 'registros' inexistente.
---              Políticas replicadas para las 3 tablas reales.
---   [PATCH-004/005] Agregadas políticas para contratos_prorrogas y
---              contratos_adiciones.
---   [PATCH-006] Consolidación de roles: inspector/obra/residente/coordinador/
---              interventor/supervisor → operativo/obra/interventoria/supervision.
---              Nombres de columnas de BD conservados sin cambios.
+--   operativo     → inspectores de campo; crean registros en QField
+--   obra          → residentes; revisan y aprueban nivel 1
+--   interventoria → interventoría; aprueban nivel 2
+--   supervision   → solo lectura
+--   admin         → administración total
 -- ============================================================
 
 
@@ -33,8 +20,8 @@
 
 ALTER TABLE perfiles                 ENABLE ROW LEVEL SECURITY;
 ALTER TABLE contratos                ENABLE ROW LEVEL SECURITY;
-ALTER TABLE contratos_prorrogas      ENABLE ROW LEVEL SECURITY;  -- [PATCH-004]
-ALTER TABLE contratos_adiciones      ENABLE ROW LEVEL SECURITY;  -- [PATCH-005]
+ALTER TABLE contratos_prorrogas      ENABLE ROW LEVEL SECURITY;
+ALTER TABLE contratos_adiciones      ENABLE ROW LEVEL SECURITY;
 ALTER TABLE registros_cantidades     ENABLE ROW LEVEL SECURITY;
 ALTER TABLE registros_componentes    ENABLE ROW LEVEL SECURITY;
 ALTER TABLE registros_reporte_diario ENABLE ROW LEVEL SECURITY;
