@@ -49,6 +49,8 @@
 --  │      003_FUNCIONES_TRIGGERS.sql Lógica de negocio en BD
 --  │      004_INDICES.sql            Índices de rendimiento
 --  │      005_USUARIOS.sql           Creación de usuarios demo
+--  │      006_MULTI_TENANT_UNIQUE.sql  UNIQUE (contrato_id, folio/id_unico)
+--  │      007_ADMIN_DELETE_POLICES.sql Políticas DELETE para rol admin
 --  │
 --  └─ BDO-IDU-1556-2025  (repo de sincronización)
 --       Scripts Python que conectan QFieldCloud con Supabase.
@@ -95,6 +97,7 @@
 --     └─▶ cierres_semanales
 --         └─▶ cierre_registros
 --     └─▶ notificaciones                ← genérico (sin FK por diseño)
+--     └─▶ sync_state                   ← estado de sync incremental
 --
 --   001_TABLAS.sql también incluye:
 --   · Seed data de contratos_aux_infra (EP, CI, MV)
@@ -200,6 +203,23 @@
 --   PASO 1: crear el usuario en Supabase Auth → copiar UUID.
 --   PASO 2: insertar en perfiles con ese UUID.
 --   Solo para entornos de desarrollo / usuarios iniciales.
+--
+-- 006_MULTI_TENANT_UNIQUE.sql
+-- ───────────────────────────
+--   Constraints UNIQUE compuestos por contrato en todas las tablas
+--   de formularios y registros fotográficos.
+--   Formularios → UNIQUE (contrato_id, folio):
+--     registros_cantidades · registros_componentes
+--     registros_reporte_diario · formulario_pmt
+--   Fotos → UNIQUE (contrato_id, id_unico):
+--     rf_cantidades · rf_componentes · rf_reporte_diario
+--
+-- 007_ADMIN_DELETE_POLICES.sql
+-- ────────────────────────────
+--   Políticas RLS que permiten al rol admin eliminar registros en:
+--     anotaciones_generales · correspondencia
+--     registros_reporte_diario · registros_cantidades
+--     registros_componentes
 --
 -- ============================================================
 -- MÓDULOS PYTHON DE SINCRONIZACIÓN (BDO-IDU-1556-2025/sync/)
@@ -326,17 +346,19 @@
 --
 --   Para crear el esquema desde cero (entorno nuevo o reset):
 --
---     1. Ejecutar 000_DROP_ALL.sql   (elimina tablas Y funciones)
---     2. Ejecutar 001_TABLAS.sql     (crea tablas + seed data)
---     3. Ejecutar 002_RLS.sql        (políticas de seguridad)
+--     1. Ejecutar 000_DROP_ALL.sql            (elimina tablas Y funciones)
+--     2. Ejecutar 001_TABLAS.sql              (crea tablas + seed data + sync_state)
+--     3. Ejecutar 002_RLS.sql                 (políticas de seguridad)
 --     4. Ejecutar 003_FUNCIONES_TRIGGERS.sql
 --     5. Ejecutar 004_INDICES.sql
---     6. Ejecutar 005_USUARIOS.sql   (solo en desarrollo)
+--     6. Ejecutar 005_USUARIOS.sql            (solo en desarrollo)
+--     7. Ejecutar 006_MULTI_TENANT_UNIQUE.sql (constraints UNIQUE multi-tenant)
+--     8. Ejecutar 007_ADMIN_DELETE_POLICES.sql (DELETE para admin)
 --
---   IMPORTANTE: 000_DROP_ALL.sql ahora también elimina las
---   funciones (get_rol, marcar_inmutable, log_cambio_estado,
---   crear_notificacion, sync_contrato_*). Si solo se quiere
---   resetear los datos sin recrear el esquema, NO ejecutar 000.
+--   IMPORTANTE: 000_DROP_ALL.sql también elimina las funciones
+--   (get_rol, marcar_inmutable, log_cambio_estado, crear_notificacion,
+--   sync_contrato_*). Si solo se quiere resetear datos sin recrear
+--   el esquema, NO ejecutar 000.
 --
 -- ============================================================
 -- EJECUCIÓN LOCAL DEL SYNC (pruebas)
