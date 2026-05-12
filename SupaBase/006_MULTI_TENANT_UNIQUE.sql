@@ -1,5 +1,5 @@
 -- ============================================================
--- MÓDULO 007 · UNIQUE CONSTRAINTS MULTI-TENANT
+-- MÓDULO 006 · UNIQUE CONSTRAINTS MULTI-TENANT
 --
 -- Corrección: unicidad POR CONTRATO en todas las tablas de formularios
 -- y registros fotográficos.
