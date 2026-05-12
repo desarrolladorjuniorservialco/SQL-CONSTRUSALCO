@@ -786,3 +786,18 @@ ALTER TABLE tramos_bd_historial
     FOREIGN KEY (contrato_id, id_tramo)
     REFERENCES tramos_bd(contrato_id, id_tramo)
     ON DELETE CASCADE;
+
+
+-- ════════════════════════════════════════════════════════════
+-- 14. ESTADO DE SINCRONIZACIÓN
+--     Persiste la última sync exitosa por tabla y contrato.
+--     Habilita sync incremental en sync_formularios.py:
+--     solo se procesan registros nuevos desde ultima_sync.
+-- ════════════════════════════════════════════════════════════
+
+CREATE TABLE IF NOT EXISTS sync_state (
+  contrato_id TEXT        NOT NULL REFERENCES contratos(id),
+  tabla       TEXT        NOT NULL,
+  ultima_sync TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (contrato_id, tabla)
+);
