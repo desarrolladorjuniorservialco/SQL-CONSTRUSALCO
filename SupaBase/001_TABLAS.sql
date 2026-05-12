@@ -205,14 +205,12 @@ CREATE TABLE IF NOT EXISTS presupuesto_componentes_aux (
 -- ════════════════════════════════════════════════════════════
 
 -- 4.1 Formulario de Cantidades
---     folio NO es UNIQUE — el GPKG puede tener varios ítems por folio
---     (uno por ítem de pago). El upsert usa id_unico como clave.
+--     folio es la clave de upsert (UNIQUE por contrato via constraint compuesto).
 --     id_tramo, codigo_elemento, tipo_infra y tipo_actividad sin FK
 --     para evitar 23503 cuando el sync corre antes que los catálogos.
 CREATE TABLE IF NOT EXISTS registros_cantidades (
   id                       UUID DEFAULT gen_random_uuid() PRIMARY KEY,
   folio                    TEXT NOT NULL,
-  id_unico                 TEXT UNIQUE,
   contrato_id              TEXT REFERENCES contratos(id),
   fecha_creacion           TIMESTAMPTZ DEFAULT NOW(),
   creado_por               UUID REFERENCES perfiles(id),
@@ -279,8 +277,7 @@ CREATE TABLE IF NOT EXISTS registros_cantidades (
 --     (sin FK en id_tramo, codigo_elemento, tipo_infra, tipo_actividad)
 CREATE TABLE IF NOT EXISTS registros_componentes (
   id                       UUID DEFAULT gen_random_uuid() PRIMARY KEY,
-  folio                    TEXT UNIQUE NOT NULL,
-  id_unico                 TEXT UNIQUE,
+  folio                    TEXT NOT NULL,
   contrato_id              TEXT REFERENCES contratos(id),
   fecha_creacion           TIMESTAMPTZ DEFAULT NOW(),
   creado_por               UUID REFERENCES perfiles(id),
@@ -337,12 +334,10 @@ CREATE TABLE IF NOT EXISTS registros_componentes (
 );
 
 -- 4.3 Reporte Diario  (Reporte_Diario)
--- [PATCH-006] folio es NOT NULL pero NO UNIQUE: el GPKG puede tener varios
--- ítems (pk_id/civ) por sesión diaria (folio). id_unico es la clave de upsert.
+-- folio es la clave de upsert (UNIQUE por contrato via constraint compuesto).
 CREATE TABLE IF NOT EXISTS registros_reporte_diario (
   id                       UUID DEFAULT gen_random_uuid() PRIMARY KEY,
   folio                    TEXT NOT NULL,
-  id_unico                 TEXT UNIQUE,
   contrato_id              TEXT REFERENCES contratos(id),
   fecha_creacion           TIMESTAMPTZ DEFAULT NOW(),
   creado_por               UUID REFERENCES perfiles(id),
