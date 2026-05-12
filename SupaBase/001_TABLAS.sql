@@ -453,17 +453,15 @@ CREATE TABLE IF NOT EXISTS bd_sst_ambiental (
 -- ════════════════════════════════════════════════════════════
 -- 6. REGISTROS FOTOGRÁFICOS
 --    Fuente: RF_Cantidades.gpkg · RF_Componentes.gpkg · RF_ReporteDiario.gpkg
---    id_unico: identificador del registro fotográfico (no FK al formulario).
---    La relación fotos↔formulario se establece por folio.
---    foto_url: URL en Supabase Storage (bucket Registro_Obra/{contrato_id}/…).
+--    folio es la clave de upsert (UNIQUE por contrato via constraint compuesto).
+--    foto_url: URL en Google Drive.
 -- ════════════════════════════════════════════════════════════
 
 -- 6.1 Fotos de cantidades
 CREATE TABLE IF NOT EXISTS rf_cantidades (
   id                UUID DEFAULT gen_random_uuid() PRIMARY KEY,
   contrato_id       TEXT REFERENCES contratos(id),
-  folio             TEXT,
-  id_unico          TEXT NOT NULL,
+  folio             TEXT NOT NULL,
   observacion       TEXT,
   nombre_foto       TEXT,
   ruta_destino_foto TEXT,
@@ -474,8 +472,7 @@ CREATE TABLE IF NOT EXISTS rf_cantidades (
 CREATE TABLE IF NOT EXISTS rf_componentes (
   id            UUID DEFAULT gen_random_uuid() PRIMARY KEY,
   contrato_id   TEXT REFERENCES contratos(id),
-  folio         TEXT,
-  id_unico      TEXT NOT NULL,
+  folio         TEXT NOT NULL,
   observaciones TEXT,
   foto          TEXT,
   foto_url      TEXT
@@ -485,8 +482,7 @@ CREATE TABLE IF NOT EXISTS rf_componentes (
 CREATE TABLE IF NOT EXISTS rf_reporte_diario (
   id            UUID DEFAULT gen_random_uuid() PRIMARY KEY,
   contrato_id   TEXT REFERENCES contratos(id),
-  folio         TEXT,
-  id_unico      TEXT NOT NULL,
+  folio         TEXT NOT NULL,
   observaciones TEXT,
   foto          TEXT,
   foto_url      TEXT
