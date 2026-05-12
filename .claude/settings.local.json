@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python3 -c ' *)",
+      "Bash(python3 -m pip install pdfplumber openpyxl --trusted-host pypi.org --trusted-host files.pythonhosted.org -q)"
+    ]
+  }
+}
