@@ -92,6 +92,8 @@ CREATE TABLE IF NOT EXISTS tramos_aux_tramos (
 
 -- 2.4 Base de datos de tramos  (BD_Tramos.gpkg)
 --     infraestructura: texto sin FK (patrón sin FK para evitar 23503 en sync).
+--     meta_fisica_prog / und: llenados por el sync desde Excel BD_TRAMOS
+--       (columnas MF_TIPO → infraestructura, MF_PROGRAMADO → meta_fisica_prog, UNIDAD → und).
 CREATE TABLE IF NOT EXISTS tramos_bd (
   id_tramo          TEXT PRIMARY KEY,
   contrato_id       TEXT NOT NULL REFERENCES contratos(id),
@@ -100,33 +102,14 @@ CREATE TABLE IF NOT EXISTS tramos_bd (
   via_desde         TEXT,
   via_hasta         TEXT,
   localidad         TEXT,
-  infraestructura   TEXT,        -- sin FK: referencia lógica a tramos_aux_infra.codigo
+  infraestructura   TEXT,          -- sin FK: código de tramos_aux_infra (CI / EP / MV)
   observaciones     TEXT,
-  cicloruta_km      NUMERIC(10,4),
-  esp_publico_m2    NUMERIC(14,4),
-  -- Meta física consolidada: unidad y valor según tipo de infraestructura.
-  -- CI → cicloruta_km (km) | EP → esp_publico_m2 (m²) | MV → metros lineales (ml)
-  meta_fisica       NUMERIC(14,4),
-  und               TEXT,
+  meta_fisica_prog  NUMERIC(14,4), -- meta física programada (desde Excel MF_PROGRAMADO)
+  und               TEXT,          -- unidad de medida (desde Excel UNIDAD)
   -- Avance físico real ingresado manualmente por rol obra
-  ejecutado         NUMERIC(14,4) DEFAULT 0,
+  meta_fisica_ejec  NUMERIC(14,4) DEFAULT 0,
   UNIQUE (contrato_id, id_tramo)
 );
-
--- Rellenar meta_fisica / und desde las columnas originales según infraestructura
-UPDATE tramos_bd SET
-  meta_fisica = cicloruta_km,
-  und         = 'km'
-WHERE infraestructura = 'CI'
-  AND cicloruta_km IS NOT NULL
-  AND meta_fisica  IS NULL;
-
-UPDATE tramos_bd SET
-  meta_fisica = esp_publico_m2,
-  und         = 'm²'
-WHERE infraestructura = 'EP'
-  AND esp_publico_m2 IS NOT NULL
-  AND meta_fisica    IS NULL;
 
 
 -- ════════════════════════════════════════════════════════════
@@ -740,26 +723,26 @@ COMMENT ON COLUMN correspondencia.modificado_por_nombre  IS 'Nombre de la person
 
 -- ════════════════════════════════════════════════════════════
 -- 13. HISTORIAL DE EJECUCIÓN DE META FÍSICA
---     Auditoría de cada cambio al campo tramos_bd.ejecutado.
+--     Auditoría de cada cambio al campo tramos_bd.meta_fisica_ejec.
 --     Solo el rol obra puede insertar; todos los roles leen.
 --     Registro inmutable (sin UPDATE ni DELETE desde la app).
 --     modificado_en se almacena en UTC; la app muestra UTC-5.
 -- ════════════════════════════════════════════════════════════
 
 CREATE TABLE IF NOT EXISTS tramos_bd_historial (
-  id                UUID        DEFAULT gen_random_uuid() PRIMARY KEY,
-  contrato_id       TEXT        REFERENCES contratos(id),
-  id_tramo          TEXT        NOT NULL REFERENCES tramos_bd(id_tramo) ON DELETE CASCADE,
-  ejecutado_ant     NUMERIC(14,4),
-  ejecutado_nuevo   NUMERIC(14,4) NOT NULL,
-  modificado_por    UUID        NOT NULL REFERENCES perfiles(id),
-  modificado_nombre TEXT        NOT NULL,
-  modificado_en     TIMESTAMPTZ DEFAULT NOW()
+  id                    UUID        DEFAULT gen_random_uuid() PRIMARY KEY,
+  contrato_id           TEXT        REFERENCES contratos(id),
+  id_tramo              TEXT        NOT NULL REFERENCES tramos_bd(id_tramo) ON DELETE CASCADE,
+  meta_fisica_ejec_ant  NUMERIC(14,4),
+  meta_fisica_ejec_nuevo NUMERIC(14,4) NOT NULL,
+  modificado_por        UUID        NOT NULL REFERENCES perfiles(id),
+  modificado_nombre     TEXT        NOT NULL,
+  modificado_en         TIMESTAMPTZ DEFAULT NOW()
 );
 
-COMMENT ON TABLE  tramos_bd_historial                    IS 'Auditoría de cambios al avance físico (ejecutado) por tramo.';
-COMMENT ON COLUMN tramos_bd_historial.ejecutado_ant      IS 'Valor de ejecutado antes del cambio (NULL en el primer registro).';
-COMMENT ON COLUMN tramos_bd_historial.ejecutado_nuevo    IS 'Nuevo valor de ejecutado registrado por el rol obra.';
+COMMENT ON TABLE  tramos_bd_historial                              IS 'Auditoría de cambios al avance físico (meta_fisica_ejec) por tramo.';
+COMMENT ON COLUMN tramos_bd_historial.meta_fisica_ejec_ant        IS 'Valor de meta_fisica_ejec antes del cambio (NULL en el primer registro).';
+COMMENT ON COLUMN tramos_bd_historial.meta_fisica_ejec_nuevo      IS 'Nuevo valor de meta_fisica_ejec registrado por el rol obra.';
 COMMENT ON COLUMN tramos_bd_historial.modificado_nombre  IS 'Nombre del usuario desnormalizado para consulta rápida sin JOIN.';
 COMMENT ON COLUMN tramos_bd_historial.modificado_en      IS 'Timestamp UTC del momento del cambio; la app convierte a UTC-5 para visualización.';
 
