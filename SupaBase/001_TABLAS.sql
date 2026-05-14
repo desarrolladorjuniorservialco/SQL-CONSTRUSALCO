@@ -91,23 +91,24 @@ CREATE TABLE IF NOT EXISTS tramos_aux_tramos (
 );
 
 -- 2.4 Base de datos de tramos  (Tramos_IDU-1556-2025.xlsx → hoja BD_TRAMOS)
---     infraestructura: MF_TIPO del Excel, sin FK (patrón sin FK para evitar 23503 en sync).
+--     infraestructura: MF_TIPO del Excel (CI / EP / MV). NOT NULL: forma parte de la PK
+--       porque un mismo id_tramo puede tener varias infraestructuras (ej. T-11: CI y EP).
 --     meta_fisica_prog / und: MF_PROGRAMADO y UNIDAD del Excel.
---     PK compuesta (contrato_id, id_tramo): permite el mismo id_tramo en distintos contratos.
+--     PK compuesta (contrato_id, id_tramo, infraestructura).
 CREATE TABLE IF NOT EXISTS tramos_bd (
   contrato_id       TEXT        NOT NULL REFERENCES contratos(id),
   id_tramo          TEXT        NOT NULL,
+  infraestructura   TEXT        NOT NULL,    -- CI / EP / MV (parte de la PK)
   tramo_descripcion TEXT,
   via_principal     TEXT,
   via_desde         TEXT,
   via_hasta         TEXT,
   localidad         TEXT,
-  infraestructura   TEXT,          -- sin FK: código CI / EP / MV
   observaciones     TEXT,
   meta_fisica_prog  NUMERIC(14,4), -- meta física programada (Excel MF_PROGRAMADO)
   und               TEXT,          -- unidad de medida (Excel UNIDAD)
   meta_fisica_ejec  NUMERIC(14,4) DEFAULT 0, -- avance real, ingresado manualmente por rol obra
-  PRIMARY KEY (contrato_id, id_tramo)
+  PRIMARY KEY (contrato_id, id_tramo, infraestructura)
 );
 
 
@@ -734,14 +735,15 @@ CREATE TABLE IF NOT EXISTS tramos_bd_historial (
   id                     UUID        DEFAULT gen_random_uuid() PRIMARY KEY,
   contrato_id            TEXT        REFERENCES contratos(id),
   id_tramo               TEXT        NOT NULL,
+  infraestructura        TEXT        NOT NULL, -- identifica la fila exacta de tramos_bd
   meta_fisica_ejec_ant   NUMERIC(14,4),
   meta_fisica_ejec_nuevo NUMERIC(14,4) NOT NULL,
   modificado_por         UUID        NOT NULL REFERENCES perfiles(id),
   modificado_nombre      TEXT        NOT NULL,
   modificado_en          TIMESTAMPTZ DEFAULT NOW(),
   CONSTRAINT tramos_bd_historial_tramo_fkey
-    FOREIGN KEY (contrato_id, id_tramo)
-    REFERENCES tramos_bd(contrato_id, id_tramo)
+    FOREIGN KEY (contrato_id, id_tramo, infraestructura)
+    REFERENCES tramos_bd(contrato_id, id_tramo, infraestructura)
     ON DELETE CASCADE
 );
 
