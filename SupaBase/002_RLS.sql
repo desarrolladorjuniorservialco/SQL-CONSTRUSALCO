@@ -616,7 +616,7 @@ CREATE POLICY "ref_select" ON tramos_aux_tramos
 CREATE POLICY "ref_service" ON tramos_aux_tramos
   FOR ALL TO service_role USING (TRUE) WITH CHECK (TRUE);
 
--- tramos_bd: todos leen; solo obra y admin actualizan ejecutado
+-- tramos_bd: todos leen; solo obra y admin actualizan meta_fisica_ejec
 DROP POLICY IF EXISTS "ref_select"       ON tramos_bd;
 DROP POLICY IF EXISTS "ref_service"      ON tramos_bd;
 DROP POLICY IF EXISTS "tbd_select"       ON tramos_bd;
