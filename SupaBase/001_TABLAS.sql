@@ -90,34 +90,34 @@ CREATE TABLE IF NOT EXISTS tramos_aux_tramos (
   PRIMARY KEY (contrato_id, codigo)
 );
 
--- 2.4 Base de datos de tramos  (BD_Tramos.gpkg)
---     infraestructura: texto sin FK (patrón sin FK para evitar 23503 en sync).
---     meta_fisica_prog / und: llenados por el sync desde Excel BD_TRAMOS
---       (columnas MF_TIPO → infraestructura, MF_PROGRAMADO → meta_fisica_prog, UNIDAD → und).
+-- 2.4 Base de datos de tramos  (Tramos_IDU-1556-2025.xlsx → hoja BD_TRAMOS)
+--     infraestructura: MF_TIPO del Excel, sin FK (patrón sin FK para evitar 23503 en sync).
+--     meta_fisica_prog / und: MF_PROGRAMADO y UNIDAD del Excel.
+--     PK compuesta (contrato_id, id_tramo): permite el mismo id_tramo en distintos contratos.
 CREATE TABLE IF NOT EXISTS tramos_bd (
-  id_tramo          TEXT PRIMARY KEY,
-  contrato_id       TEXT NOT NULL REFERENCES contratos(id),
+  contrato_id       TEXT        NOT NULL REFERENCES contratos(id),
+  id_tramo          TEXT        NOT NULL,
   tramo_descripcion TEXT,
   via_principal     TEXT,
   via_desde         TEXT,
   via_hasta         TEXT,
   localidad         TEXT,
-  infraestructura   TEXT,          -- sin FK: código de tramos_aux_infra (CI / EP / MV)
+  infraestructura   TEXT,          -- sin FK: código CI / EP / MV
   observaciones     TEXT,
-  meta_fisica_prog  NUMERIC(14,4), -- meta física programada (desde Excel MF_PROGRAMADO)
-  und               TEXT,          -- unidad de medida (desde Excel UNIDAD)
-  -- Avance físico real ingresado manualmente por rol obra
-  meta_fisica_ejec  NUMERIC(14,4) DEFAULT 0,
-  UNIQUE (contrato_id, id_tramo)
+  meta_fisica_prog  NUMERIC(14,4), -- meta física programada (Excel MF_PROGRAMADO)
+  und               TEXT,          -- unidad de medida (Excel UNIDAD)
+  meta_fisica_ejec  NUMERIC(14,4) DEFAULT 0, -- avance real, ingresado manualmente por rol obra
+  PRIMARY KEY (contrato_id, id_tramo)
 );
 
 
 -- ════════════════════════════════════════════════════════════
 -- 3. TABLAS DE PRESUPUESTO
---    Fuente: BD_Presupuesto.gpkg · AUX_Capitulos.gpkg · AUX_Componentes.gpkg
+--    Presupuesto.xlsx        → presupuesto_bd, presupuesto_aux_actividad, presupuesto_aux_capitulos
+--    PPTO_COMPONENTES.xlsx   → presupuesto_componentes_bd, presupuesto_componentes_aux
 -- ════════════════════════════════════════════════════════════
 
--- 3.1 Catálogo de tipos de actividad  (AUX_Actividad.gpkg)
+-- 3.1 Catálogo de tipos de actividad  (Presupuesto.xlsx → hoja AUX_ACTIVIDAD)
 --     PK compuesta: los mismos tipos de actividad se repiten entre contratos.
 CREATE TABLE IF NOT EXISTS presupuesto_aux_actividad (
   contrato_id    TEXT NOT NULL REFERENCES contratos(id),
@@ -125,7 +125,7 @@ CREATE TABLE IF NOT EXISTS presupuesto_aux_actividad (
   PRIMARY KEY (contrato_id, tipo_actividad)
 );
 
--- 3.2 Catálogo de capítulos  (AUX_Capitulos.gpkg)
+-- 3.2 Catálogo de capítulos  (Presupuesto.xlsx → hoja AUX_CAPITULOS)
 --     tipo_actividad: texto sin FK (PK de presupuesto_aux_actividad es compuesta).
 CREATE TABLE IF NOT EXISTS presupuesto_aux_capitulos (
   id             SERIAL PRIMARY KEY,
@@ -136,23 +136,24 @@ CREATE TABLE IF NOT EXISTS presupuesto_aux_capitulos (
   UNIQUE (contrato_id, tipo_actividad, capitulo_num)
 );
 
--- 3.3 Presupuesto de obras  (BD_Presupuesto.gpkg)
+-- 3.3 Presupuesto de obras  (Presupuesto.xlsx → hoja BD_PRESUPUESTO)
 --     tipo_actividad: texto sin FK.  codigo_idu: único por contrato.
 CREATE TABLE IF NOT EXISTS presupuesto_bd (
-  id             SERIAL PRIMARY KEY,
-  contrato_id    TEXT NOT NULL REFERENCES contratos(id),
-  tipo_actividad TEXT,            -- sin FK
-  capitulo_num   TEXT,
-  capitulo       TEXT,
-  codigo_idu     TEXT,
-  item_pago      TEXT,
-  descripcion    TEXT,
-  unidad         TEXT,
-  cantidad_ppto  NUMERIC(16,4),
+  id              SERIAL PRIMARY KEY,
+  contrato_id     TEXT NOT NULL REFERENCES contratos(id),
+  tipo_actividad  TEXT,            -- sin FK
+  capitulo_num    TEXT,
+  capitulo        TEXT,
+  codigo_idu      TEXT,
+  item_pago       TEXT,
+  descripcion     TEXT,
+  unidad          TEXT,
+  cantidad_ppto   NUMERIC(16,4),
+  precio_unitario NUMERIC(18,4),
   UNIQUE (contrato_id, codigo_idu)
 );
 
--- 3.4 Presupuesto de componentes  (AUX_Componentes.gpkg)
+-- 3.4 Presupuesto de componentes  (PPTO_COMPONENTES.xlsx → hoja PPTO_COMPONENTES)
 --     codigo_idu: único por contrato.
 CREATE TABLE IF NOT EXISTS presupuesto_componentes_bd (
   id              SERIAL PRIMARY KEY,
@@ -730,14 +731,18 @@ COMMENT ON COLUMN correspondencia.modificado_por_nombre  IS 'Nombre de la person
 -- ════════════════════════════════════════════════════════════
 
 CREATE TABLE IF NOT EXISTS tramos_bd_historial (
-  id                    UUID        DEFAULT gen_random_uuid() PRIMARY KEY,
-  contrato_id           TEXT        REFERENCES contratos(id),
-  id_tramo              TEXT        NOT NULL REFERENCES tramos_bd(id_tramo) ON DELETE CASCADE,
-  meta_fisica_ejec_ant  NUMERIC(14,4),
+  id                     UUID        DEFAULT gen_random_uuid() PRIMARY KEY,
+  contrato_id            TEXT        REFERENCES contratos(id),
+  id_tramo               TEXT        NOT NULL,
+  meta_fisica_ejec_ant   NUMERIC(14,4),
   meta_fisica_ejec_nuevo NUMERIC(14,4) NOT NULL,
-  modificado_por        UUID        NOT NULL REFERENCES perfiles(id),
-  modificado_nombre     TEXT        NOT NULL,
-  modificado_en         TIMESTAMPTZ DEFAULT NOW()
+  modificado_por         UUID        NOT NULL REFERENCES perfiles(id),
+  modificado_nombre      TEXT        NOT NULL,
+  modificado_en          TIMESTAMPTZ DEFAULT NOW(),
+  CONSTRAINT tramos_bd_historial_tramo_fkey
+    FOREIGN KEY (contrato_id, id_tramo)
+    REFERENCES tramos_bd(contrato_id, id_tramo)
+    ON DELETE CASCADE
 );
 
 COMMENT ON TABLE  tramos_bd_historial                              IS 'Auditoría de cambios al avance físico (meta_fisica_ejec) por tramo.';
@@ -745,30 +750,6 @@ COMMENT ON COLUMN tramos_bd_historial.meta_fisica_ejec_ant        IS 'Valor de m
 COMMENT ON COLUMN tramos_bd_historial.meta_fisica_ejec_nuevo      IS 'Nuevo valor de meta_fisica_ejec registrado por el rol obra.';
 COMMENT ON COLUMN tramos_bd_historial.modificado_nombre  IS 'Nombre del usuario desnormalizado para consulta rápida sin JOIN.';
 COMMENT ON COLUMN tramos_bd_historial.modificado_en      IS 'Timestamp UTC del momento del cambio; la app convierte a UTC-5 para visualización.';
-
-
--- ════════════════════════════════════════════════════════════
--- MIGRACIÓN: tramos_bd — PK compuesta (contrato_id, id_tramo)
---   La PK original era id_tramo TEXT (simple), que impide insertar
---   el mismo id_tramo para un segundo contrato.
--- ════════════════════════════════════════════════════════════
-
-ALTER TABLE tramos_bd_historial
-  DROP CONSTRAINT IF EXISTS tramos_bd_historial_id_tramo_fkey;
-
-ALTER TABLE tramos_bd
-  DROP CONSTRAINT IF EXISTS tramos_bd_pkey;
-ALTER TABLE tramos_bd
-  ADD PRIMARY KEY (contrato_id, id_tramo);
-
-ALTER TABLE tramos_bd
-  DROP CONSTRAINT IF EXISTS tramos_bd_contrato_id_id_tramo_key;
-
-ALTER TABLE tramos_bd_historial
-  ADD CONSTRAINT tramos_bd_historial_tramo_fkey
-    FOREIGN KEY (contrato_id, id_tramo)
-    REFERENCES tramos_bd(contrato_id, id_tramo)
-    ON DELETE CASCADE;
 
 
 -- ════════════════════════════════════════════════════════════
