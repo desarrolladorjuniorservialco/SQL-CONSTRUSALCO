@@ -201,7 +201,6 @@ CREATE POLICY "rc_operativo_select" ON registros_cantidades
   FOR SELECT TO authenticated
   USING (
     get_rol() = 'operativo'
-    AND creado_por = auth.uid()
     AND contrato_id = get_contrato_id()
   );
 
@@ -311,7 +310,6 @@ CREATE POLICY "rco_operativo_select" ON registros_componentes
   FOR SELECT TO authenticated
   USING (
     get_rol() = 'operativo'
-    AND creado_por = auth.uid()
     AND contrato_id = get_contrato_id()
   );
 
@@ -417,7 +415,6 @@ CREATE POLICY "rrd_operativo_select" ON registros_reporte_diario
   FOR SELECT TO authenticated
   USING (
     get_rol() = 'operativo'
-    AND creado_por = auth.uid()
     AND contrato_id = get_contrato_id()
   );
 
